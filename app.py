@@ -616,7 +616,12 @@ def progress_rank_page(records: pd.DataFrame, filters: dict[str, list[str]], gro
             with cols[index]:
                 type_frame = system_frame[system_frame["Test"].isin(columns)] if columns else system_frame.iloc[0:0]
                 rank = ranked_performance(type_frame, group_column)
-                render_rank_chart(rank, group_column, f"{assessment_type} Rank")
+                render_rank_chart(
+                    rank,
+                    group_column,
+                    f"{system_label} {assessment_type} Rank",
+                    f"{group_column}_{system_label}_{assessment_type}_rank_chart",
+                )
         table_tabs = st.tabs(["Diagnostic", "SPM", "PSPM"])
         for tab, (assessment_type, columns) in zip(table_tabs, type_columns.items()):
             with tab:
@@ -1341,7 +1346,7 @@ def split_system_frames(performance_long: pd.DataFrame) -> list[tuple[str, pd.Da
     return frames
 
 
-def render_rank_chart(rank: pd.DataFrame, group_column: str, title: str) -> None:
+def render_rank_chart(rank: pd.DataFrame, group_column: str, title: str, chart_key: str) -> None:
     if rank.empty:
         blank_state(f"No records for {title}.")
         return
@@ -1356,7 +1361,7 @@ def render_rank_chart(rank: pd.DataFrame, group_column: str, title: str) -> None
         hover_data=["Rank", "Records", "Students"],
     )
     fig.update_layout(height=390, yaxis={"categoryorder": "total ascending"}, margin=dict(l=20, r=20, t=55, b=20))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=chart_key)
 
 
 def split_people(value: object) -> list[str]:

@@ -1109,6 +1109,7 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
             uploaded = st.file_uploader("Upload file", type=["csv", "xlsx", "xls"], key=f"upload_{dataset_key}")
             if uploaded:
                 try:
+                    uploaded.seek(0)
                     if uploaded.name.lower().endswith(".csv"):
                         incoming = pd.read_csv(uploaded)
                     else:
@@ -1160,7 +1161,7 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
                                 pass
                             if not history_logged:
                                 set_data_management_warning("The import was saved, but edit history was not recorded because the edit_history table is unavailable.")
-                            st.rerun()
+                            store.refresh_cache()
                         except Exception as exc:
                             st.error(f"Bulk import failed: {exc}")
 

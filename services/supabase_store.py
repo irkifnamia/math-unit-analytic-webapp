@@ -279,9 +279,8 @@ class SupabaseStore:
                 if is_empty_value(record_id):
                     self.client.table(table_name).insert(payload).execute()
                 else:
-                    response = self.client.table(table_name).update(payload).eq("id", record_id).execute()
-                    if response.data == []:
-                        raise RuntimeError(f"No {table_name} row was updated for id {record_id}.")
+                    self.client.table(table_name).update(payload).eq("id", record_id).execute()
+                    verify_saved_payload(self.client, table_name, "id", record_id, payload)
             else:
                 match_value = raw.get(match_column)
                 if is_empty_value(match_value):
@@ -294,16 +293,8 @@ class SupabaseStore:
                 )
                 matches = response.data or []
                 if matches:
-                    update_response = (
-                        self.client.table(table_name)
-                        .update(payload)
-                        .eq(match_column, match_value)
-                        .execute()
-                    )
-                    if update_response.data == []:
-                        raise RuntimeError(
-                            f"No {table_name} rows were updated for {match_column} {match_value}."
-                        )
+                    self.client.table(table_name).update(payload).eq(match_column, match_value).execute()
+                    verify_saved_payload(self.client, table_name, match_column, match_value, payload)
                 else:
                     self.client.table(table_name).insert(payload).execute()
             saved += 1
@@ -610,6 +601,51 @@ def clean_payload(
             continue
         clean[column] = value
     return clean
+
+
+def verify_saved_payload(
+    client: Client,
+    table_name: str,
+    match_column: str,
+    match_value: Any,
+    payload: dict[str, Any],
+) -> None:
+    verify_columns = list(payload.keys())
+    if not verify_columns:
+        return
+    response = (
+        client.table(table_name)
+        .select(select_columns(verify_columns))
+        .eq(match_column, match_value)
+        .limit(1)
+        .execute()
+    )
+    saved_rows = response.data or []
+    if not saved_rows:
+        raise RuntimeError(f"Supabase did not return a saved row for {match_column} {match_value}.")
+    saved = saved_rows[0]
+    mismatched = [
+        column
+        for column, expected in payload.items()
+        if not saved_value_matches(saved.get(column), expected)
+    ]
+    if mismatched:
+        raise RuntimeError(
+            "Supabase save verification failed for "
+            f"{match_column} {match_value}. Columns not updated: {', '.join(mismatched)}."
+        )
+
+
+def saved_value_matches(actual: Any, expected: Any) -> bool:
+    if is_empty_value(expected):
+        return is_empty_value(actual)
+    if is_empty_value(actual):
+        return False
+    expected_number = pd.to_numeric(pd.Series([expected]), errors="coerce").iloc[0]
+    actual_number = pd.to_numeric(pd.Series([actual]), errors="coerce").iloc[0]
+    if not pd.isna(expected_number) and not pd.isna(actual_number):
+        return float(expected_number) == float(actual_number)
+    return str(actual).strip() == str(expected).strip()
 
 
 def is_empty_value(value: Any) -> bool:

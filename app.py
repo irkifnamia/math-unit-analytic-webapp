@@ -10,6 +10,7 @@ import streamlit as st
 from components.ui import afj_sidebar_brand, app_brand, blank_state, inject_theme, page_header
 from services.supabase_store import (
     create_upload_template,
+    natural_key_column,
     SupabaseStore,
     validate_import_frame,
 )
@@ -46,13 +47,17 @@ DATASET_SEARCH_COLUMNS = {
     "results": ["NO MATRIK", "NAMA PELAJAR", "SPM_MATH", "SPM_ADDMATH"],
 }
 GRADE_SCORE_MAP = {
-    "A": 100,
+    "A+": 100,
+    "A": 95,
     "A-": 90,
     "B+": 85,
     "B": 80,
     "B-": 75,
     "C+": 70,
     "C": 65,
+    "D": 50,
+    "E": 40,
+    "G": 30,
 }
 
 
@@ -146,21 +151,30 @@ def sidebar_navigation(
         "Admin": [
             "DEMOGRAPHY",
             "SPM ANALYSIS",
+            "PSPM ANALYSIS",
             "DIAGNOSTIC ANALYSIS",
-            "LECTURER & CLASS PERFORMANCE",
+            "LECTURER PROGRESS",
+            "CLASS PROGRESS",
+            "DOWNLOAD",
             "DATA MANAGEMENT",
         ],
         "Executive": [
             "DEMOGRAPHY",
             "SPM ANALYSIS",
+            "PSPM ANALYSIS",
             "DIAGNOSTIC ANALYSIS",
-            "LECTURER & CLASS PERFORMANCE",
+            "LECTURER PROGRESS",
+            "CLASS PROGRESS",
+            "DOWNLOAD",
         ],
         "Lecturer": [
             "DEMOGRAPHY",
             "SPM ANALYSIS",
+            "PSPM ANALYSIS",
             "DIAGNOSTIC ANALYSIS",
-            "LECTURER & CLASS PERFORMANCE",
+            "LECTURER PROGRESS",
+            "CLASS PROGRESS",
+            "DOWNLOAD",
         ],
     }
     page = st.sidebar.radio("Navigation", role_pages[user["role"]])
@@ -213,21 +227,6 @@ def demography_dashboard(records: pd.DataFrame, user: dict) -> None:
     if records.empty:
         blank_state("No records match the selected filters. Use Clear filters or Refresh Supabase data in the sidebar.")
         return
-
-    demography_export = filtered_columns(
-        records,
-        [
-            "NO MATRIK",
-            "NAMA PELAJAR",
-            "JURUSAN",
-            "SISTEM",
-            "KELAS",
-            "SUBJEK",
-            "PROGRAM",
-            "PENSYARAH",
-        ],
-    )
-    render_download_buttons(demography_export, "demography_filtered_data", "Filtered Demography Data")
 
     kpis = st.columns(5)
     kpis[0].metric("Students", f"{records['NO MATRIK'].nunique():,}")
@@ -336,33 +335,17 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
         blank_state("No SPM_MATH or SPM_ADDMATH values match the selected filters.")
         return
 
-    spm_export = filtered_columns(
-        spm_records,
-        [
-            "NO MATRIK",
-            "NAMA PELAJAR",
-            "KELAS",
-            "SUBJEK",
-            "PENSYARAH",
-            *selected_spm_columns,
-        ],
-    )
-    render_download_buttons(spm_export, "spm_analysis_filtered_data", "Filtered SPM Analysis Data")
-
     kpis = st.columns(4)
     kpis[0].metric("SPM Math Records", f"{spm_records['SPM_MATH'].notna().sum():,}" if "SPM_MATH" in spm_records else "0")
     kpis[1].metric("SPM Add Math Records", f"{spm_records['SPM_ADDMATH'].notna().sum():,}" if "SPM_ADDMATH" in spm_records else "0")
     kpis[2].metric("SPM Math Grades", f"{spm_records['SPM_MATH'].nunique():,}" if "SPM_MATH" in spm_records else "0")
     kpis[3].metric("SPM Add Math Grades", f"{spm_records['SPM_ADDMATH'].nunique():,}" if "SPM_ADDMATH" in spm_records else "0")
 
-    grade_long = pd.concat(
-        [
-            spm_records[[column]].rename(columns={column: "GRADE"}).assign(RESULT=column)
-            for column in selected_spm_columns
-        ],
-        ignore_index=True,
-    ).dropna()
+    grade_long = grade_long_frame(spm_records, selected_spm_columns)
     grade_counts = grade_long.value_counts(["RESULT", "GRADE"]).reset_index(name="COUNT")
+    if grade_counts.empty:
+        blank_state("No valid SPM grades match the selected filters.")
+        return
 
     left, right = st.columns(2)
     with left:
@@ -380,60 +363,41 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
         st.plotly_chart(fig, use_container_width=True)
 
     with right:
-        comparison = grade_counts.groupby("RESULT", as_index=False)["COUNT"].sum()
-        fig = px.pie(
-            comparison,
-            names="RESULT",
-            values="COUNT",
-            hole=0.48,
-            title="Mathematics vs Additional Mathematics Result Volume",
-            color_discrete_sequence=["#1d4ed8", "#0f766e"],
+        addmath_status = addmath_completion_frame(spm_records)
+        fig = px.bar(
+            addmath_status,
+            x="Status",
+            y="Count",
+            color="Status",
+            text="Label",
+            title="SPM ADDMATH Participation",
+            color_discrete_map={"Taken": "#0f766e", "Not Taken": "#b45309"},
+            custom_data=["Percent"],
         )
+        fig.update_traces(hovertemplate="%{x}<br>Students: %{y:,}<br>Percentage: %{customdata[0]:.1f}%<extra></extra>")
         fig.update_layout(height=390, margin=dict(l=20, r=20, t=55, b=20))
         st.plotly_chart(fig, use_container_width=True)
 
-    left, right = st.columns(2)
-    with left:
-        proportions = grade_counts.copy()
-        totals = proportions.groupby("RESULT")["COUNT"].transform("sum")
-        proportions["PERCENT"] = proportions["COUNT"] / totals * 100
-        fig = px.bar(
-            proportions,
-            x="RESULT",
-            y="PERCENT",
-            color="GRADE",
-            title="Grade Proportion",
-            category_orders={"GRADE": GRADE_ORDER},
-            color_discrete_sequence=px.colors.qualitative.Safe,
-        )
-        fig.update_layout(height=360, yaxis_title="Percent", margin=dict(l=20, r=20, t=55, b=20))
-        st.plotly_chart(fig, use_container_width=True)
+    proportions = grade_proportion_frame(grade_counts)
+    fig = px.bar(
+        proportions,
+        x="RESULT",
+        y="PERCENT",
+        color="GRADE",
+        title="Grade Proportion",
+        category_orders={"GRADE": GRADE_ORDER},
+        color_discrete_sequence=px.colors.qualitative.Safe,
+        custom_data=["COUNT"],
+    )
+    fig.update_traces(
+        hovertemplate="%{x}<br>Grade: %{fullData.name}<br>Percentage: %{y:.1f}%<br>Students: %{customdata[0]:,}<extra></extra>"
+    )
+    fig.update_layout(height=390, yaxis_title="Percent", margin=dict(l=20, r=20, t=55, b=20))
+    st.plotly_chart(fig, use_container_width=True)
 
-    with right:
-        available_result_columns = [column for column in RESULT_COLUMNS if column in spm_records]
-        result_completeness = (
-            spm_records[available_result_columns]
-            .notna()
-            .sum()
-            .rename_axis("RESULT_COLUMN")
-            .reset_index(name="COUNT")
-        )
-        fig = px.line(
-            result_completeness,
-            x="RESULT_COLUMN",
-            y="COUNT",
-            markers=True,
-            title="Available Result Columns",
-            color_discrete_sequence=["#1d4ed8"],
-        )
-        fig.update_layout(height=360, xaxis_title="", margin=dict(l=20, r=20, t=55, b=20))
-        st.plotly_chart(fig, use_container_width=True)
-
-    st.subheader("SPM Grade Matrix")
+    st.subheader("SPM ADDMATH vs SPM MATH Grade Matrix")
     if {"SPM_MATH", "SPM_ADDMATH"}.issubset(selected_spm_columns):
-        matrix = pd.crosstab(spm_records["SPM_MATH"], spm_records["SPM_ADDMATH"])
-        matrix = matrix.reindex(index=GRADE_ORDER, columns=GRADE_ORDER, fill_value=0).dropna(how="all")
-        st.dataframe(matrix, use_container_width=True)
+        render_grade_matrix(spm_records, "SPM_MATH", "SPM_ADDMATH")
     else:
         blank_state("Select both SPM_MATH and SPM_ADDMATH in Ujian to view the grade matrix.")
 
@@ -454,6 +418,59 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
     )
 
 
+def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
+    page_header(
+        "PSPM ANALYSIS",
+        "Analyse PSPM DM015, DM025, Semester 1, and Semester 2 grade movement.",
+        user["role"],
+    )
+    pspm_columns = selected_ujian_columns(filters, GRADE_TEST_COLUMNS)
+    if not pspm_columns:
+        blank_state("The selected Ujian filter does not include PSPM assessments.")
+        return
+    if not any(column in records for column in pspm_columns):
+        blank_state("PSPM analytics need PSPM columns from the Supabase results table.")
+        return
+
+    pspm_records = records.dropna(subset=[column for column in pspm_columns if column in records], how="all")
+    if pspm_records.empty:
+        blank_state("No PSPM results match the selected filters.")
+        return
+
+    kpis = st.columns(4)
+    kpis[0].metric("Students", f"{pspm_records['NO MATRIK'].nunique():,}" if "NO MATRIK" in pspm_records else "0")
+    kpis[1].metric("DM015 Records", f"{pspm_records['PSPM_DM015'].notna().sum():,}" if "PSPM_DM015" in pspm_records else "0")
+    kpis[2].metric("DM025 Records", f"{pspm_records['PSPM_DM025'].notna().sum():,}" if "PSPM_DM025" in pspm_records else "0")
+    kpis[3].metric("SEM Results", f"{pspm_records[['PSPM_SEM1', 'PSPM_SEM2']].notna().sum().sum():,}" if {"PSPM_SEM1", "PSPM_SEM2"}.issubset(pspm_records.columns) else "0")
+
+    left, right = st.columns(2)
+    with left:
+        render_grade_proportion_chart(pspm_records, ["PSPM_DM015", "PSPM_DM025"], "PSPM DM015 vs PSPM DM025 Grade Proportion")
+    with right:
+        render_grade_proportion_chart(pspm_records, ["PSPM_SEM1", "PSPM_SEM2"], "PSPM SEM1 vs PSPM SEM2 Grade Proportion")
+
+    left, right = st.columns(2)
+    with left:
+        st.subheader("PSPM DM015 vs PSPM DM025 Matrix")
+        render_grade_matrix(pspm_records, "PSPM_DM015", "PSPM_DM025")
+    with right:
+        st.subheader("PSPM SEM1 vs PSPM SEM2 Matrix")
+        render_grade_matrix(pspm_records, "PSPM_SEM1", "PSPM_SEM2")
+
+    st.subheader("Filtered PSPM Records")
+    display_cols = [
+        "NO MATRIK",
+        "NAMA PELAJAR",
+        "KELAS",
+        "PENSYARAH",
+        "JURUSAN",
+        "PROGRAM",
+        "SISTEM",
+        *pspm_columns,
+    ]
+    st.dataframe(pspm_records[[col for col in display_cols if col in pspm_records.columns]], hide_index=True, use_container_width=True)
+
+
 def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
     page_header(
         "DIAGNOSTIC ANALYSIS",
@@ -468,20 +485,6 @@ def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, l
     if diagnostic_long.empty:
         blank_state("No AMAT diagnostic data match the selected filters.")
         return
-
-    diagnostic_export = filtered_columns(
-        records,
-        [
-            "NO MATRIK",
-            "NAMA PELAJAR",
-            "KELAS",
-            "PENSYARAH",
-            "JURUSAN",
-            "PROGRAM",
-            *diagnostic_columns,
-        ],
-    )
-    render_download_buttons(diagnostic_export, "diagnostic_analysis_filtered_data", "Filtered Diagnostic Analysis Data")
 
     latest_test = diagnostic_columns[-1]
     kpis = st.columns(4)
@@ -508,19 +511,13 @@ def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, l
 
     with right:
         class_progress = diagnostic_long.groupby(["KELAS", "Test"], as_index=False)["Score"].mean()
-        top_classes = (
-            class_progress[class_progress["Test"] == latest_test]
-            .sort_values("Score", ascending=False)
-            .head(8)["KELAS"]
-            .tolist()
-        )
         fig = px.line(
-            class_progress[class_progress["KELAS"].isin(top_classes)],
+            class_progress,
             x="Test",
             y="Score",
             color="KELAS",
             markers=True,
-            title="Top Class Progress",
+            title="All Class Diagnostic Progress",
             category_orders={"Test": diagnostic_columns},
         )
         fig.update_layout(height=390, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=55, b=20))
@@ -541,22 +538,25 @@ def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, l
         st.plotly_chart(fig, use_container_width=True)
 
     with right:
-        lecturer_average = (
-            diagnostic_long.groupby("PENSYARAH", as_index=False)["Score"]
-            .mean()
-            .sort_values("Score", ascending=False)
-            .head(12)
+        sistem_heatmap = diagnostic_long.pivot_table(
+            index="Test",
+            columns="SISTEM",
+            values="Score",
+            aggfunc="mean",
+        ).reindex(index=diagnostic_columns)
+        preferred_systems = [system for system in ["SES", "SDS"] if system in sistem_heatmap.columns]
+        if preferred_systems:
+            sistem_heatmap = sistem_heatmap[preferred_systems]
+        fig = px.imshow(
+            sistem_heatmap.round(1),
+            aspect="auto",
+            text_auto=".1f",
+            color_continuous_scale="YlGnBu",
+            title="Diagnostic Average Heatmap: SES vs SDS",
+            zmin=0,
+            zmax=100,
         )
-        fig = px.bar(
-            lecturer_average,
-            x="Score",
-            y="PENSYARAH",
-            orientation="h",
-            title="Average AMAT by Lecturer",
-            color="Score",
-            color_continuous_scale="Teal",
-        )
-        fig.update_layout(height=360, yaxis={"categoryorder": "total ascending"}, margin=dict(l=20, r=20, t=55, b=20))
+        fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20))
         st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("Diagnostic Records")
@@ -572,98 +572,116 @@ def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, l
     st.dataframe(records[[col for col in display_cols if col in records.columns]], hide_index=True, use_container_width=True)
 
 
-def lecturer_class_performance_page(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
+def lecturer_progress_page(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
     page_header(
-        "LECTURER & CLASS PERFORMANCE",
-        "Rank lecturers and classes across PSPM and AMAT assessments.",
+        "LECTURER PROGRESS",
+        "Rank lecturer progress by diagnostic, SPM, and PSPM performance across SES, SDS, and overall.",
         user["role"],
     )
-    performance_columns = selected_ujian_columns(filters, PERFORMANCE_COLUMNS)
-    if not performance_columns:
-        blank_state("The selected Ujian filter does not include PSPM or AMAT assessments.")
+    progress_rank_page(records, filters, "PENSYARAH", "Lecturer")
+
+
+def class_progress_page(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
+    page_header(
+        "CLASS PROGRESS",
+        "Rank class progress by diagnostic, SPM, and PSPM performance across SES, SDS, and overall.",
+        user["role"],
+    )
+    progress_rank_page(records, filters, "KELAS", "Class")
+
+
+def progress_rank_page(records: pd.DataFrame, filters: dict[str, list[str]], group_column: str, group_label: str) -> None:
+    type_columns = {
+        "Diagnostic": selected_ujian_columns(filters, DIAGNOSTIC_COLUMNS),
+        "SPM": selected_ujian_columns(filters, SPM_TEST_COLUMNS),
+        "PSPM": selected_ujian_columns(filters, GRADE_TEST_COLUMNS),
+    }
+    active_columns = [column for columns in type_columns.values() for column in columns]
+    if not active_columns:
+        blank_state("The selected Ujian filter does not include diagnostic, SPM, or PSPM assessments.")
         return
-    performance_long = assessment_long_frame(records, performance_columns)
+    performance_long = assessment_long_frame(records, active_columns)
     if performance_long.empty:
         blank_state("No assessment data match the selected filters.")
         return
-
-    render_download_buttons(
-        performance_long,
-        "lecturer_class_performance_filtered_data",
-        "Filtered Lecturer and Class Performance Data",
-    )
 
     kpis = st.columns(4)
     kpis[0].metric("Students", f"{performance_long['NO MATRIK'].nunique():,}")
     kpis[1].metric("Assessments", f"{performance_long['Test'].nunique():,}")
     kpis[2].metric("Overall Score", f"{performance_long['Score'].mean():.1f}")
-    kpis[3].metric("Classes", f"{performance_long['KELAS'].nunique():,}")
+    kpis[3].metric(f"{group_label}s", f"{performance_long[group_column].nunique():,}" if group_column in performance_long else "0")
 
-    lecturer_rank = ranked_performance(performance_long, "PENSYARAH")
-    class_rank = ranked_performance(performance_long, "KELAS")
+    for system_label, system_frame in split_system_frames(performance_long):
+        st.subheader(system_label)
+        cols = st.columns(3)
+        for index, (assessment_type, columns) in enumerate(type_columns.items()):
+            with cols[index]:
+                type_frame = system_frame[system_frame["Test"].isin(columns)] if columns else system_frame.iloc[0:0]
+                rank = ranked_performance(type_frame, group_column)
+                render_rank_chart(rank, group_column, f"{assessment_type} Rank")
+        table_tabs = st.tabs(["Diagnostic", "SPM", "PSPM"])
+        for tab, (assessment_type, columns) in zip(table_tabs, type_columns.items()):
+            with tab:
+                type_frame = system_frame[system_frame["Test"].isin(columns)] if columns else system_frame.iloc[0:0]
+                rank = ranked_performance(type_frame, group_column)
+                if rank.empty:
+                    blank_state(f"No {assessment_type.lower()} records for {system_label}.")
+                else:
+                    st.dataframe(rank, hide_index=True, use_container_width=True)
 
-    left, right = st.columns(2)
-    with left:
-        fig = px.bar(
-            lecturer_rank.head(15),
-            x="Average Score",
-            y="PENSYARAH",
-            orientation="h",
-            title="Lecturer Ranking",
-            color="Average Score",
-            color_continuous_scale="Teal",
-        )
-        fig.update_layout(height=430, yaxis={"categoryorder": "total ascending"}, margin=dict(l=20, r=20, t=55, b=20))
-        st.plotly_chart(fig, use_container_width=True)
 
-    with right:
-        fig = px.bar(
-            class_rank.head(15),
-            x="Average Score",
-            y="KELAS",
-            orientation="h",
-            title="Class Ranking",
-            color="Average Score",
-            color_continuous_scale="Blues",
-        )
-        fig.update_layout(height=430, yaxis={"categoryorder": "total ascending"}, margin=dict(l=20, r=20, t=55, b=20))
-        st.plotly_chart(fig, use_container_width=True)
+def download_page(records: pd.DataFrame, user: dict) -> None:
+    page_header(
+        "DOWNLOAD",
+        "Choose fields, filter rows, and export the selected dataset.",
+        user["role"],
+    )
+    if records.empty:
+        blank_state("No records match the selected filters. Use Clear filters or Refresh Supabase data in the sidebar.")
+        return
 
-    left, right = st.columns(2)
-    with left:
-        lecturer_heatmap = performance_long.pivot_table(
-            index="PENSYARAH",
-            columns="Test",
-            values="Score",
-            aggfunc="mean",
-        ).reindex(columns=performance_columns)
-        fig = px.imshow(
-            lecturer_heatmap,
-            aspect="auto",
-            color_continuous_scale="YlGnBu",
-            title="Lecturer Performance by Assessment",
-        )
-        fig.update_layout(height=390, margin=dict(l=20, r=20, t=55, b=20))
-        st.plotly_chart(fig, use_container_width=True)
+    available_columns = [column for column in records.columns if column not in ["id", "created_at", "updated_at"]]
+    default_columns = [
+        column
+        for column in [
+            "NO MATRIK",
+            "NAMA PELAJAR",
+            "KELAS",
+            "PENSYARAH",
+            "JURUSAN",
+            "PROGRAM",
+            "SUBJEK",
+        ]
+        if column in available_columns
+    ]
 
-    with right:
-        test_average = performance_long.groupby("Test", as_index=False)["Score"].mean()
-        fig = px.line(
-            test_average,
-            x="Test",
-            y="Score",
-            markers=True,
-            title="Overall Assessment Trend",
-            category_orders={"Test": performance_columns},
-            color_discrete_sequence=["#1d4ed8"],
-        )
-        fig.update_layout(height=390, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=55, b=20))
-        st.plotly_chart(fig, use_container_width=True)
+    st.subheader("Download Builder")
+    selected_columns = st.multiselect(
+        "Info fields to download",
+        available_columns,
+        default=default_columns,
+        key="download_selected_columns",
+    )
 
-    st.subheader("Lecturer Ranking Table")
-    st.dataframe(lecturer_rank, hide_index=True, use_container_width=True)
-    st.subheader("Class Ranking Table")
-    st.dataframe(class_rank, hide_index=True, use_container_width=True)
+    filtered = records.copy()
+
+    search_text = st.text_input(
+        "Search rows",
+        placeholder="Search across selected fields after global filters",
+        key="download_search_text",
+    )
+    if search_text.strip():
+        search_columns = selected_columns or available_columns
+        filtered = search_any_columns(filtered, search_text, search_columns)
+
+    st.metric("Rows ready to download", f"{len(filtered):,}")
+    if not selected_columns:
+        blank_state("Choose at least one info field to download.")
+        return
+
+    export_df = filtered[selected_columns].copy()
+    st.dataframe(export_df.head(500), hide_index=True, use_container_width=True)
+    render_download_buttons(export_df, "custom_download_filtered_data", "Custom Download Data")
 
 
 def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> None:
@@ -729,34 +747,62 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
 
     with tab_import:
         st.subheader(f"Bulk Import and Update {dataset_label}")
-        st.caption("Upload CSV or Excel files using only the exact Supabase columns. Include id to update a specific row, or use the natural key to update the first matching row.")
-        template = create_upload_template(dataset_key)
-        template_csv = template.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "Download CSV template",
-            template_csv,
-            f"{dataset_key}_template.csv",
-            "text/csv",
+        st.caption("Choose the fields to update. Imported rows only update the selected columns; other Supabase columns remain unchanged.")
+        default_match_column = natural_key_column(dataset_key)
+        match_column = st.selectbox(
+            "Match rows by",
+            ["id", default_match_column],
+            index=1,
+            help="Use id for exact row updates, or the natural key to update the first matching row.",
         )
-        uploaded = st.file_uploader("Upload file", type=["csv", "xlsx", "xls"], key=f"upload_{dataset_key}")
-        if uploaded:
-            try:
-                if uploaded.name.lower().endswith(".csv"):
-                    incoming = pd.read_csv(uploaded)
-                else:
-                    incoming = pd.read_excel(uploaded)
-                preview, errors = validate_import_frame(incoming, refs, dataset_key)
-                st.subheader("Preview")
-                st.dataframe(preview, hide_index=True, use_container_width=True)
-                if errors:
-                    st.error("Please fix the validation errors before saving.")
-                    st.write(errors)
-                elif st.button("Save imported data", type="primary"):
-                    saved = store.bulk_upsert_reference(dataset_key, preview)
-                    st.success(f"Import complete. {saved} {dataset_label.lower()} record(s) saved.")
-                    st.rerun()
-            except Exception as exc:
-                st.error(f"Unable to read uploaded file: {exc}")
+        update_choices = [
+            column
+            for column in writable_columns
+            if not (match_column != "id" and column == match_column)
+        ]
+        default_update_columns = update_choices[:1] if update_choices else []
+        selected_update_columns = st.multiselect(
+            "Columns to update",
+            update_choices,
+            default=default_update_columns,
+            help="Only these columns will be changed during bulk import.",
+        )
+        if not selected_update_columns:
+            st.info("Choose at least one column to update before downloading a template or uploading data.")
+        else:
+            template = create_upload_template(dataset_key, selected_update_columns, match_column)
+            template_csv = template.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "Download CSV template",
+                template_csv,
+                f"{dataset_key}_template.csv",
+                "text/csv",
+            )
+            uploaded = st.file_uploader("Upload file", type=["csv", "xlsx", "xls"], key=f"upload_{dataset_key}")
+            if uploaded:
+                try:
+                    if uploaded.name.lower().endswith(".csv"):
+                        incoming = pd.read_csv(uploaded)
+                    else:
+                        incoming = pd.read_excel(uploaded)
+                    preview, errors = validate_import_frame(
+                        incoming,
+                        refs,
+                        dataset_key,
+                        selected_update_columns,
+                        match_column,
+                    )
+                    st.subheader("Preview")
+                    st.dataframe(preview, hide_index=True, use_container_width=True)
+                    if errors:
+                        st.error("Please fix the validation errors before saving.")
+                        st.write(errors)
+                    elif st.button("Save imported data", type="primary"):
+                        saved = store.bulk_upsert_reference(dataset_key, preview)
+                        st.success(f"Import complete. {saved} {dataset_label.lower()} record(s) saved.")
+                        st.rerun()
+                except Exception as exc:
+                    st.error(f"Unable to read uploaded file: {exc}")
 
     with tab_refs:
         st.subheader(f"{dataset_label} Reference Data")
@@ -802,6 +848,21 @@ def search_dataset(df: pd.DataFrame, query: str, dataset_key: str) -> pd.DataFra
         return df
     mask = pd.Series(False, index=df.index)
     for column in columns:
+        mask = mask | df[column].fillna("").astype(str).str.lower().str.contains(search_text, regex=False)
+    return df[mask]
+
+
+def search_any_columns(df: pd.DataFrame, query: str, columns: list[str]) -> pd.DataFrame:
+    if df.empty or not query:
+        return df
+    search_text = query.strip().lower()
+    if not search_text:
+        return df
+    searchable_columns = [column for column in columns if column in df.columns]
+    if not searchable_columns:
+        return df
+    mask = pd.Series(False, index=df.index)
+    for column in searchable_columns:
         mask = mask | df[column].fillna("").astype(str).str.lower().str.contains(search_text, regex=False)
     return df[mask]
 
@@ -1056,6 +1117,92 @@ def selected_ujian_columns(filters: dict[str, list[str]], available_columns: lis
     return [column for column in available_columns if column in selected]
 
 
+def grade_long_frame(records: pd.DataFrame, grade_columns: list[str]) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    for column in grade_columns:
+        if column not in records.columns:
+            continue
+        frame = records[[column]].rename(columns={column: "GRADE"}).assign(RESULT=column)
+        frames.append(frame)
+    if not frames:
+        return pd.DataFrame(columns=["RESULT", "GRADE"])
+    combined = pd.concat(frames, ignore_index=True)
+    combined["GRADE"] = combined["GRADE"].replace({None: pd.NA}).astype("string").str.strip()
+    combined = combined[combined["GRADE"].notna() & (combined["GRADE"] != "")]
+    return combined
+
+
+def grade_proportion_frame(grade_counts: pd.DataFrame) -> pd.DataFrame:
+    if grade_counts.empty:
+        return pd.DataFrame(columns=["RESULT", "GRADE", "COUNT", "PERCENT"])
+    proportions = grade_counts.copy()
+    totals = proportions.groupby("RESULT")["COUNT"].transform("sum")
+    proportions["PERCENT"] = proportions["COUNT"] / totals * 100
+    return proportions
+
+
+def addmath_completion_frame(records: pd.DataFrame) -> pd.DataFrame:
+    total = len(records)
+    if total == 0 or "SPM_ADDMATH" not in records:
+        return pd.DataFrame({"Status": ["Taken", "Not Taken"], "Count": [0, 0], "Percent": [0.0, 0.0], "Label": ["0 (0.0%)", "0 (0.0%)"]})
+    taken = records["SPM_ADDMATH"].notna() & (records["SPM_ADDMATH"].astype(str).str.strip() != "")
+    counts = pd.DataFrame(
+        {
+            "Status": ["Taken", "Not Taken"],
+            "Count": [int(taken.sum()), int((~taken).sum())],
+        }
+    )
+    counts["Percent"] = counts["Count"] / total * 100
+    counts["Label"] = counts.apply(lambda row: f"{row['Count']:,} ({row['Percent']:.1f}%)", axis=1)
+    return counts
+
+
+def render_grade_proportion_chart(records: pd.DataFrame, columns: list[str], title: str) -> None:
+    available_columns = [column for column in columns if column in records.columns]
+    grade_counts = grade_long_frame(records, available_columns).value_counts(["RESULT", "GRADE"]).reset_index(name="COUNT")
+    if grade_counts.empty:
+        blank_state(f"No data available for {title}.")
+        return
+    proportions = grade_proportion_frame(grade_counts)
+    fig = px.bar(
+        proportions,
+        x="RESULT",
+        y="PERCENT",
+        color="GRADE",
+        title=title,
+        category_orders={"GRADE": GRADE_ORDER},
+        color_discrete_sequence=px.colors.qualitative.Safe,
+        custom_data=["COUNT"],
+    )
+    fig.update_traces(
+        hovertemplate="%{x}<br>Grade: %{fullData.name}<br>Percentage: %{y:.1f}%<br>Students: %{customdata[0]:,}<extra></extra>"
+    )
+    fig.update_layout(height=390, yaxis_title="Percent", margin=dict(l=20, r=20, t=55, b=20))
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def grade_matrix(records: pd.DataFrame, row_column: str, column_column: str) -> pd.DataFrame:
+    if not {row_column, column_column}.issubset(records.columns):
+        return pd.DataFrame()
+    clean = records[[row_column, column_column]].copy()
+    for column in [row_column, column_column]:
+        clean[column] = clean[column].replace({None: pd.NA}).astype("string").str.strip()
+    clean = clean.dropna(subset=[row_column, column_column])
+    clean = clean[(clean[row_column] != "") & (clean[column_column] != "")]
+    if clean.empty:
+        return pd.DataFrame()
+    return pd.crosstab(clean[row_column], clean[column_column])
+
+
+def render_grade_matrix(records: pd.DataFrame, row_column: str, column_column: str) -> None:
+    matrix = grade_matrix(records, row_column, column_column)
+    if matrix.empty:
+        blank_state(f"No paired grades available for {row_column} and {column_column}.")
+        return
+    matrix = matrix.reindex(index=GRADE_ORDER, columns=GRADE_ORDER, fill_value=0).dropna(how="all")
+    st.dataframe(matrix, use_container_width=True)
+
+
 def score_series(values: pd.Series, column: str) -> pd.Series:
     if column in DIAGNOSTIC_COLUMNS:
         return pd.to_numeric(values, errors="coerce")
@@ -1087,13 +1234,17 @@ def assessment_long_frame(records: pd.DataFrame, test_columns: list[str]) -> pd.
         return pd.DataFrame(columns=[*identity_columns, "Test", "Raw Value", "Score"])
     combined = pd.concat(frames, ignore_index=True)
     combined = combined.dropna(subset=["Score"])
-    if "PENSYARAH" in combined:
-        combined = combined[combined["PENSYARAH"].fillna("").astype(str).str.strip() != ""]
     return combined
 
 
 def ranked_performance(performance_long: pd.DataFrame, group_column: str) -> pd.DataFrame:
     if performance_long.empty or group_column not in performance_long:
+        return pd.DataFrame(columns=["Rank", group_column, "Average Score", "Records", "Students"])
+    performance_long = performance_long[
+        performance_long[group_column].notna()
+        & (performance_long[group_column].astype(str).str.strip() != "")
+    ].copy()
+    if performance_long.empty:
         return pd.DataFrame(columns=["Rank", group_column, "Average Score", "Records", "Students"])
     rank = (
         performance_long.groupby(group_column)
@@ -1110,6 +1261,37 @@ def ranked_performance(performance_long: pd.DataFrame, group_column: str) -> pd.
     rank.insert(0, "Rank", range(1, len(rank) + 1))
     rank["Average Score"] = rank["Average Score"].round(1)
     return rank
+
+
+def split_system_frames(performance_long: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
+    frames = [("Overall", performance_long)]
+    for system in ["SES", "SDS"]:
+        if "SISTEM" not in performance_long:
+            frames.append((system, performance_long.iloc[0:0]))
+            continue
+        system_frame = performance_long[
+            performance_long["SISTEM"].fillna("").astype(str).str.upper().str.strip() == system
+        ]
+        frames.append((system, system_frame))
+    return frames
+
+
+def render_rank_chart(rank: pd.DataFrame, group_column: str, title: str) -> None:
+    if rank.empty:
+        blank_state(f"No records for {title}.")
+        return
+    fig = px.bar(
+        rank.head(12),
+        x="Average Score",
+        y=group_column,
+        orientation="h",
+        title=title,
+        color="Average Score",
+        color_continuous_scale="YlGnBu",
+        hover_data=["Rank", "Records", "Students"],
+    )
+    fig.update_layout(height=390, yaxis={"categoryorder": "total ascending"}, margin=dict(l=20, r=20, t=55, b=20))
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def split_people(value: object) -> list[str]:
@@ -1160,7 +1342,7 @@ def main() -> None:
 
     base_records = store.fetch_base_records(user, results_mode="none")
     page, filters = sidebar_navigation(user, store, base_records)
-    if page in ["DIAGNOSTIC ANALYSIS", "LECTURER & CLASS PERFORMANCE"]:
+    if page in ["PSPM ANALYSIS", "DIAGNOSTIC ANALYSIS", "LECTURER PROGRESS", "CLASS PROGRESS", "DOWNLOAD"]:
         base_records = store.fetch_base_records(user, results_mode="all")
     elif page in ["SPM ANALYSIS", "DATA MANAGEMENT"]:
         base_records = store.fetch_base_records(user, results_mode="spm")
@@ -1171,10 +1353,16 @@ def main() -> None:
         demography_dashboard(records, user)
     elif page == "SPM ANALYSIS":
         results_dashboard(records, user, filters)
+    elif page == "PSPM ANALYSIS":
+        pspm_analysis_page(records, user, filters)
     elif page == "DIAGNOSTIC ANALYSIS":
         diagnostic_dashboard(records, user, filters)
-    elif page == "LECTURER & CLASS PERFORMANCE":
-        lecturer_class_performance_page(records, user, filters)
+    elif page == "LECTURER PROGRESS":
+        lecturer_progress_page(records, user, filters)
+    elif page == "CLASS PROGRESS":
+        class_progress_page(records, user, filters)
+    elif page == "DOWNLOAD":
+        download_page(records, user)
     elif page == "DATA MANAGEMENT":
         data_management_page(records, user, store)
 

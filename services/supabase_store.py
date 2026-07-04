@@ -524,12 +524,14 @@ def validate_import_frame(
     raw: pd.DataFrame,
     refs: dict[str, pd.DataFrame],
     dataset_key: str = "students",
+    update_columns: list[str] | None = None,
+    match_column: str | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
     df = raw.copy()
-    template_columns = create_upload_template(dataset_key).columns.tolist()
-    writable_columns = reference_table_and_columns(dataset_key)[1]
+    template_columns = create_upload_template(dataset_key, update_columns, match_column).columns.tolist()
+    writable_columns = [column for column in template_columns if column != "id"]
     import_columns = [column for column in template_columns if column in df.columns]
-    missing = [column for column in writable_columns if column not in df.columns]
+    missing = [column for column in template_columns if column not in df.columns]
     errors = [f"Missing column: {column}" for column in missing]
     if errors:
         return df, errors
@@ -538,20 +540,26 @@ def validate_import_frame(
     for column in df.columns:
         df[column] = df[column].fillna("").astype(str).str.strip()
 
-    required = required_import_columns(dataset_key)
+    required = required_import_columns(dataset_key, match_column)
     for row_number, row in df.iterrows():
         for column in required:
-            if row[column] == "":
+            if column not in row or row[column] == "":
                 errors.append(f"Row {row_number + 2}: {column} is required")
         if dataset_key == "results":
-            result_values = [row[column] for column in RESULTS_WRITABLE_COLUMNS if column != "NO MATRIK"]
+            result_values = [
+                row.get(column, "")
+                for column in writable_columns
+                if column not in ["id", "NO MATRIK"]
+            ]
             if not any(value != "" for value in result_values):
                 errors.append(f"Row {row_number + 2}: at least one result column is required")
 
     return df, errors
 
 
-def required_import_columns(dataset_key: str) -> list[str]:
+def required_import_columns(dataset_key: str, match_column: str | None = None) -> list[str]:
+    if match_column:
+        return [match_column]
     required = {
         "students": ["NO MATRIK", "NAMA PELAJAR", "KELAS", "SUBJEK"],
         "lecturers": ["KELAS", "PENSYARAH"],
@@ -561,6 +569,16 @@ def required_import_columns(dataset_key: str) -> list[str]:
     return required[dataset_key]
 
 
-def create_upload_template(dataset_key: str = "students") -> pd.DataFrame:
+def create_upload_template(
+    dataset_key: str = "students",
+    update_columns: list[str] | None = None,
+    match_column: str | None = None,
+) -> pd.DataFrame:
     _, writable_columns = reference_table_and_columns(dataset_key)
-    return pd.DataFrame(columns=["id", *writable_columns])
+    match = match_column or natural_key_column(dataset_key)
+    selected_update_columns = update_columns or writable_columns
+    columns = ["id"] if match == "id" else [match]
+    for column in selected_update_columns:
+        if column in writable_columns and column not in columns:
+            columns.append(column)
+    return pd.DataFrame(columns=columns)

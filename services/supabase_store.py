@@ -12,6 +12,8 @@ STUDENTS_TABLE = "students"
 LECTURERS_TABLE = "lecturers"
 PROGRAMS_TABLE = "programs"
 RESULTS_TABLE = "results"
+EDIT_HISTORY_TABLE = "edit_history"
+APP_USERS_TABLE = "app_users"
 
 STUDENTS_COLUMNS = [
     "id",
@@ -59,6 +61,41 @@ RESULTS_WRITABLE_COLUMNS = [
     "AMAT_C9C10",
     "PSPM_SEM1",
     "PSPM_SEM2",
+]
+EDIT_HISTORY_COLUMNS = [
+    "id",
+    "created_at",
+    "source",
+    "user_id",
+    "user_name",
+    "user_role",
+    "action",
+    "dataset",
+    "record_id",
+    "details",
+    "old_data",
+    "new_data",
+]
+EDIT_HISTORY_FALLBACK_COLUMNS = [
+    "id",
+    "created_at",
+    "user_id",
+    "user_name",
+    "user_role",
+    "action",
+    "dataset",
+    "record_id",
+    "details",
+]
+APP_USERS_COLUMNS = [
+    "id",
+    "created_at",
+    "updated_at",
+    "ic_number",
+    "full_name",
+    "role",
+    "pensyarah",
+    "is_active",
 ]
 
 UPLOAD_COLUMNS = ["NO MATRIK", "NAMA PELAJAR", "JURUSAN", "SISTEM", "KELAS", "SUBJEK"]
@@ -117,9 +154,6 @@ class SupabaseStore:
         elif results_mode == "all":
             records = attach_results(records, self.get_results_data(), RESULTS_COLUMNS)
 
-        if user and user.get("role") == "Lecturer":
-            records = scope_lecturer_records(records, user)
-
         return records.sort_values(["NAMA PELAJAR"], ascending=[True], na_position="last")
 
     def filter_records(
@@ -164,16 +198,13 @@ class SupabaseStore:
         records: pd.DataFrame,
         user: dict[str, Any] | None = None,
     ) -> dict[str, list[str]]:
-        if user and user.get("role") == "Lecturer" and user.get("PENSYARAH"):
-            pensyarah_options = [str(user["PENSYARAH"])]
-        else:
-            pensyarah_options = sorted(
-                {
-                    name
-                    for value in records.get("PENSYARAH", pd.Series(dtype=str)).dropna()
-                    for name in split_multi_value(value)
-                }
-            )
+        pensyarah_options = sorted(
+            {
+                name
+                for value in records.get("PENSYARAH", pd.Series(dtype=str)).dropna()
+                for name in split_multi_value(value)
+            }
+        )
         return {
             "Pensyarah": pensyarah_options,
             "Kelas": sorted(records.get("KELAS", pd.Series(dtype=str)).dropna().unique().tolist()),
@@ -188,7 +219,7 @@ class SupabaseStore:
 
     def upsert_reference(self, key: str, payload: dict[str, Any], record_id: Any | None = None) -> None:
         table_name, allowed_columns = reference_table_and_columns(key)
-        clean = clean_payload(payload, allowed_columns)
+        clean = clean_payload(payload, allowed_columns, include_empty=bool(record_id))
         if not clean:
             raise ValueError("No allowed Supabase columns were provided.")
         if record_id:
@@ -230,7 +261,7 @@ class SupabaseStore:
         saved = 0
         for _, row in df.iterrows():
             raw = row.to_dict()
-            payload = clean_payload(raw, allowed_columns)
+            payload = clean_payload(raw, allowed_columns, include_empty=True)
             if not payload:
                 continue
             record_id = raw.get("id")
@@ -251,6 +282,88 @@ class SupabaseStore:
             return self.get_results_data()
         refs = self.get_core_reference_data()
         return refs.get(key, pd.DataFrame()).copy()
+
+    def get_edit_history(self) -> pd.DataFrame:
+        errors: list[str] = []
+        history = select_table_frame(self.client, EDIT_HISTORY_TABLE, EDIT_HISTORY_COLUMNS, errors)
+        if errors:
+            fallback_errors: list[str] = []
+            history = select_table_frame(
+                self.client,
+                EDIT_HISTORY_TABLE,
+                EDIT_HISTORY_FALLBACK_COLUMNS,
+                fallback_errors,
+            )
+            if not history.empty and "source" not in history:
+                history["source"] = "APP"
+            self.last_errors.extend(fallback_errors or errors)
+        else:
+            self.last_errors.extend(errors)
+        if history.empty:
+            return history
+        return history.sort_values("created_at", ascending=False, na_position="last")
+
+    def log_edit_history(
+        self,
+        user: dict[str, Any],
+        action: str,
+        dataset: str,
+        record_id: Any | None = None,
+        details: str | None = None,
+    ) -> bool:
+        payload = {
+            "source": "APP",
+            "user_id": user.get("id") or user.get("ic_number"),
+            "user_name": user.get("full_name"),
+            "user_role": user.get("role"),
+            "action": action,
+            "dataset": dataset,
+            "record_id": None if is_empty_value(record_id) else str(record_id),
+            "details": details,
+        }
+        try:
+            self.client.table(EDIT_HISTORY_TABLE).insert(payload).execute()
+            return True
+        except Exception as exc:
+            try:
+                legacy_payload = {
+                    key: value
+                    for key, value in payload.items()
+                    if key in EDIT_HISTORY_FALLBACK_COLUMNS and key not in ["id", "created_at"]
+                }
+                self.client.table(EDIT_HISTORY_TABLE).insert(legacy_payload).execute()
+                return True
+            except Exception:
+                self.last_errors.append(f"Edit history logging skipped: {exc}")
+                return False
+
+    def get_app_users(self) -> pd.DataFrame:
+        errors: list[str] = []
+        users = select_table_frame(self.client, APP_USERS_TABLE, APP_USERS_COLUMNS, errors)
+        self.last_errors.extend(errors)
+        if users.empty:
+            return users
+        return users.sort_values(["role", "full_name"], ascending=[True, True], na_position="last")
+
+    def upsert_app_user(self, payload: dict[str, Any], record_id: Any | None = None) -> None:
+        allowed_columns = ["ic_number", "full_name", "role", "pensyarah", "is_active"]
+        clean = clean_payload(payload, allowed_columns)
+        if "ic_number" in clean:
+            clean["ic_number"] = "".join(character for character in str(clean["ic_number"]) if character.isdigit())
+        if "is_active" not in clean:
+            clean["is_active"] = True
+        if not clean.get("ic_number") or not clean.get("full_name") or not clean.get("role"):
+            raise ValueError("IC number, user name, and role are required.")
+        if record_id:
+            self.client.table(APP_USERS_TABLE).update(clean).eq("id", record_id).execute()
+        else:
+            self.client.table(APP_USERS_TABLE).upsert(clean, on_conflict="ic_number").execute()
+
+    def delete_app_users(self, record_ids: list[Any]) -> int:
+        if not record_ids:
+            return 0
+        self.client.table(APP_USERS_TABLE).delete().in_("id", record_ids).execute()
+        return len(record_ids)
 
     def _select_table(self, table_name: str, columns: list[str]) -> pd.DataFrame:
         return select_table_frame(self.client, table_name, columns, self.last_errors)
@@ -368,7 +481,8 @@ def attach_program(students: pd.DataFrame, programs: pd.DataFrame) -> pd.DataFra
         students["PROGRAM"] = None
         return students
     program_lookup = first_non_empty_by_key(programs, "NO MATRIK", "PROGRAM")
-    students["PROGRAM"] = students["NO MATRIK"].map(program_lookup).fillna(students["JURUSAN"])
+    students["PROGRAM"] = students["NO MATRIK"].map(program_lookup)
+    students["PROGRAM"] = students["PROGRAM"].replace("", pd.NA)
     return students
 
 
@@ -423,12 +537,22 @@ def distinct_frame(df: pd.DataFrame, column: str) -> pd.DataFrame:
     return pd.DataFrame({column: values})
 
 
-def clean_payload(payload: dict[str, Any], allowed_columns: list[str]) -> dict[str, Any]:
-    return {
-        column: payload[column]
-        for column in allowed_columns
-        if column in payload and not is_empty_value(payload[column])
-    }
+def clean_payload(
+    payload: dict[str, Any],
+    allowed_columns: list[str],
+    include_empty: bool = False,
+) -> dict[str, Any]:
+    clean: dict[str, Any] = {}
+    for column in allowed_columns:
+        if column not in payload:
+            continue
+        value = payload[column]
+        if is_empty_value(value):
+            if include_empty:
+                clean[column] = None
+            continue
+        clean[column] = value
+    return clean
 
 
 def is_empty_value(value: Any) -> bool:

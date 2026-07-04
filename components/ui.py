@@ -343,16 +343,29 @@ def inject_theme() -> None:
             font-size: 0.82rem;
         }
 
+        .sidebar-user-badge {
+            text-align: center;
+            color: var(--app-muted);
+            font-size: 0.82rem;
+            font-weight: 650;
+            line-height: 1.25;
+            margin: -0.25rem 0 1rem;
+            width: 100%;
+        }
+
         .afj-sidebar-brand {
             display: flex;
+            flex-direction: column;
             align-items: center;
-            gap: 0.65rem;
-            padding: 0.65rem;
+            justify-content: center;
+            gap: 0.4rem;
+            padding: 0.85rem 0.65rem;
             margin: 0.35rem 0 0.75rem;
             border: 1px solid var(--app-border);
             border-radius: 8px;
             background: linear-gradient(135deg, #ffffff 0%, #f6f7fc 100%);
             box-shadow: var(--app-shadow-soft);
+            text-align: center;
         }
 
         .afj-sidebar-brand img {
@@ -368,6 +381,7 @@ def inject_theme() -> None:
             font-size: 0.74rem;
             font-weight: 700;
             text-transform: uppercase;
+            text-align: center;
         }
 
         .afj-sidebar-brand strong {
@@ -375,6 +389,8 @@ def inject_theme() -> None:
             color: var(--app-ink);
             font-size: 0.88rem;
             line-height: 1.15;
+            text-align: center;
+            text-transform: uppercase;
         }
         </style>
         """,
@@ -417,10 +433,8 @@ def afj_sidebar_brand() -> None:
         f"""
         <div class="afj-sidebar-brand">
             {logo_markup}
-            <div>
-                <span>Powered by</span>
-                <strong>AFJ Analytic</strong>
-            </div>
+            <span>Powered by</span>
+            <strong>AFJ Analytic</strong>
         </div>
         """,
         unsafe_allow_html=True,

@@ -14,7 +14,9 @@ from services.supabase_store import (
 )
 
 
-GRADE_ORDER = ["A+", "A", "A-", "B+", "B", "C+", "C", "D", "E", "G"]
+SPM_GRADE_ORDER = ["A+", "A", "A-", "B+", "B", "C+", "C", "D", "E", "G"]
+PSPM_GRADE_ORDER = ["A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "F"]
+GRADE_ORDER = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "E", "F", "G"]
 RESULT_COLUMNS = [
     "SPM_ADDMATH",
     "SPM_MATH",
@@ -27,6 +29,18 @@ RESULT_COLUMNS = [
     "PSPM_SEM1",
     "PSPM_SEM2",
 ]
+APP_USERS_TABLE = "app_users"
+APP_USERS_COLUMNS = [
+    "id",
+    "created_at",
+    "updated_at",
+    "ic_number",
+    "full_name",
+    "role",
+    "pensyarah",
+    "is_active",
+]
+STUDENT_DETAIL_COLUMNS = ["NAMA PELAJAR", "NO MATRIK", "KELAS", "JURUSAN", "SISTEM"]
 DIAGNOSTIC_COLUMNS = ["AMAT_C1C2", "AMAT_C5", "AMAT_C8", "AMAT_C9C10"]
 GRADE_TEST_COLUMNS = ["PSPM_DM015", "PSPM_DM025", "PSPM_SEM1", "PSPM_SEM2"]
 PERFORMANCE_COLUMNS = [*GRADE_TEST_COLUMNS, *DIAGNOSTIC_COLUMNS]
@@ -44,24 +58,35 @@ DATASET_SEARCH_COLUMNS = {
     "programs": ["NO MATRIK", "PROGRAM"],
     "results": ["NO MATRIK", "NAMA PELAJAR", "SPM_MATH", "SPM_ADDMATH"],
 }
-GRADE_SCORE_MAP = {
-    "A+": 100,
-    "A": 95,
-    "A-": 90,
-    "B+": 85,
-    "B": 80,
-    "B-": 75,
-    "C+": 70,
-    "C": 65,
-    "D": 50,
-    "E": 40,
-    "G": 30,
+SPM_CGPA_MAP = {
+    "A+": 4.0,
+    "A": 3.67,
+    "A-": 3.33,
+    "B+": 3.0,
+    "B": 2.67,
+    "C+": 2.33,
+    "C": 2.0,
+    "D": 1.67,
+    "E": 1.33,
+    "G": 0.0,
+}
+PSPM_CGPA_MAP = {
+    "A": 4.0,
+    "A-": 3.67,
+    "B+": 3.33,
+    "B": 3.0,
+    "B-": 2.67,
+    "C+": 2.33,
+    "C": 2.0,
+    "C-": 1.67,
+    "D+": 1.33,
+    "F": 0.0,
 }
 
 
 DUMMY_IC_USERS = {
-    "900101145555": {
-        "full_name": "Temporary Admin",
+    "901007025883": {
+        "full_name": "AIMAN",
         "role": "Admin",
         "PENSYARAH": None,
     },
@@ -96,17 +121,17 @@ def login_screen(store: SupabaseStore) -> None:
             ic_number = st.text_input("IC Number", placeholder="Example: 900101-14-5555")
             submitted = st.form_submit_button("Sign in", use_container_width=True)
         if submitted:
-            user = authenticate_ic_number(ic_number)
+            user = authenticate_ic_number(ic_number, store)
             if user:
                 st.session_state.user = user
                 st.rerun()
             st.error("This IC Number is not allowed yet.")
-            st.caption("Temporary allowed ICs: 900101145555, 850505105555, 880808085555")
+            st.caption("Temporary allowed ICs: 901007025883, 850505105555, 880808085555")
 
 
-def authenticate_ic_number(ic_number: str) -> dict | None:
+def authenticate_ic_number(ic_number: str, store: SupabaseStore) -> dict | None:
     normalized_ic = normalize_ic_number(ic_number)
-    allowed_users = allowed_ic_users()
+    allowed_users = allowed_ic_users(store)
     user = allowed_users.get(normalized_ic)
     if not user:
         return None
@@ -118,7 +143,29 @@ def authenticate_ic_number(ic_number: str) -> dict | None:
     }
 
 
-def allowed_ic_users() -> dict[str, dict]:
+def allowed_ic_users(store: SupabaseStore | None = None) -> dict[str, dict]:
+    if store is not None:
+        try:
+            app_users = load_app_users(store)
+            if not app_users.empty and {"ic_number", "full_name", "role"}.issubset(app_users.columns):
+                if "is_active" in app_users.columns:
+                    app_users = app_users[app_users["is_active"].fillna(True).astype(bool)]
+                users: dict[str, dict] = {}
+                for _, row in app_users.iterrows():
+                    normalized_ic = normalize_ic_number(row.get("ic_number", ""))
+                    if not normalized_ic:
+                        continue
+                    users[normalized_ic] = {
+                        "full_name": row.get("full_name") or "Authorized User",
+                        "role": row.get("role") or "Lecturer",
+                        "PENSYARAH": row.get("pensyarah"),
+                    }
+                if users:
+                    for ic, profile in DUMMY_IC_USERS.items():
+                        users.setdefault(ic, profile)
+                    return users
+        except Exception:
+            pass
     configured_users = st.secrets.get("ALLOWED_IC_USERS", None)
     if configured_users:
         return {
@@ -132,8 +179,77 @@ def allowed_ic_users() -> dict[str, dict]:
     return DUMMY_IC_USERS
 
 
+def load_app_users(store: SupabaseStore) -> pd.DataFrame:
+    if hasattr(store, "get_app_users"):
+        return store.get_app_users()
+    try:
+        response = store.client.table(APP_USERS_TABLE).select(",".join(APP_USERS_COLUMNS)).execute()
+    except Exception as exc:
+        if hasattr(store, "last_errors"):
+            store.last_errors.append(f"app_users table query failed: {exc}")
+        return pd.DataFrame()
+    users = pd.DataFrame(response.data or [])
+    if users.empty:
+        return users
+    sort_columns = [column for column in ["role", "full_name"] if column in users.columns]
+    if sort_columns:
+        users = users.sort_values(sort_columns, na_position="last")
+    return users
+
+
+def save_app_user(store: SupabaseStore, payload: dict, record_id: object | None = None) -> None:
+    if hasattr(store, "upsert_app_user"):
+        store.upsert_app_user(payload, record_id)
+        return
+    clean = {
+        key: value
+        for key, value in payload.items()
+        if key in ["ic_number", "full_name", "role", "pensyarah", "is_active"]
+    }
+    clean["ic_number"] = normalize_ic_number(clean.get("ic_number", ""))
+    if not clean.get("ic_number") or not clean.get("full_name") or not clean.get("role"):
+        raise ValueError("IC number, user's name, and role are required.")
+    if record_id:
+        store.client.table(APP_USERS_TABLE).update(clean).eq("id", record_id).execute()
+    else:
+        store.client.table(APP_USERS_TABLE).upsert(clean, on_conflict="ic_number").execute()
+
+
+def delete_app_user_records(store: SupabaseStore, record_ids: list[object]) -> int:
+    if hasattr(store, "delete_app_users"):
+        return store.delete_app_users(record_ids)
+    if not record_ids:
+        return 0
+    store.client.table(APP_USERS_TABLE).delete().in_("id", record_ids).execute()
+    return len(record_ids)
+
+
 def normalize_ic_number(ic_number: str) -> str:
     return "".join(character for character in str(ic_number) if character.isdigit())
+
+
+def render_user_badge(user: dict) -> None:
+    st.markdown(
+        f"""
+        <div style="
+            position: fixed;
+            top: 0.55rem;
+            right: 1.15rem;
+            z-index: 2000;
+            background: rgba(255,255,255,0.94);
+            border: 1px solid #dde2ee;
+            border-radius: 999px;
+            padding: 0.35rem 0.75rem;
+            box-shadow: 0 8px 22px rgba(20,24,39,0.08);
+            color: #141827;
+            font-family: Inter, Aptos, 'Segoe UI', Arial, sans-serif;
+            font-size: 0.82rem;
+            font-weight: 750;">
+            {user.get("full_name", "User")} <span style="color:#5f6678;">| {user.get("role", "")}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def sidebar_navigation(
@@ -143,37 +259,27 @@ def sidebar_navigation(
 ) -> tuple[str, dict[str, list[str]]]:
     with st.sidebar:
         app_brand()
-    st.sidebar.caption(f"{user['full_name']} | {user['role']}")
+        st.markdown(
+            f"<div class='sidebar-user-badge'>{user['full_name']} | {user['role']}</div>",
+            unsafe_allow_html=True,
+        )
 
+    all_pages = [
+        "DEMOGRAPHY",
+        "SPM ANALYSIS",
+        "PSPM ANALYSIS",
+        "DIAGNOSTIC ANALYSIS",
+        "LECTURER PROGRESS",
+        "CLASS PROGRESS",
+        "PROGRAM PROGRESS",
+        "DOWNLOAD",
+        "DATA MANAGEMENT",
+        "ADMIN",
+    ]
     role_pages = {
-        "Admin": [
-            "DEMOGRAPHY",
-            "SPM ANALYSIS",
-            "PSPM ANALYSIS",
-            "DIAGNOSTIC ANALYSIS",
-            "LECTURER PROGRESS",
-            "CLASS PROGRESS",
-            "DOWNLOAD",
-            "DATA MANAGEMENT",
-        ],
-        "Executive": [
-            "DEMOGRAPHY",
-            "SPM ANALYSIS",
-            "PSPM ANALYSIS",
-            "DIAGNOSTIC ANALYSIS",
-            "LECTURER PROGRESS",
-            "CLASS PROGRESS",
-            "DOWNLOAD",
-        ],
-        "Lecturer": [
-            "DEMOGRAPHY",
-            "SPM ANALYSIS",
-            "PSPM ANALYSIS",
-            "DIAGNOSTIC ANALYSIS",
-            "LECTURER PROGRESS",
-            "CLASS PROGRESS",
-            "DOWNLOAD",
-        ],
+        "Admin": all_pages,
+        "Executive": [page for page in all_pages if page != "ADMIN"],
+        "Lecturer": [page for page in all_pages if page not in ["ADMIN", "LECTURER PROGRESS"]],
     }
     page = st.sidebar.radio("Navigation", role_pages[user["role"]])
 
@@ -190,21 +296,15 @@ def sidebar_navigation(
     filters: dict[str, list[str]] = {}
     for label in ["Pensyarah", "Kelas", "Subjek", "Sistem", "Program", "Jurusan", "Ujian"]:
         values = UJIAN_OPTIONS if label == "Ujian" else options.get(label, [])
-        disabled = user["role"] == "Lecturer" and label == "Pensyarah"
         key = f"global_filter_{label}"
         selected_values = st.session_state.get(key, [])
         st.session_state[key] = [value for value in selected_values if value in values]
-        if disabled and values and not st.session_state[key]:
-            st.session_state[key] = values
         filters[label] = st.sidebar.multiselect(
             label,
             values,
             key=key,
             placeholder=f"All {label}",
-            disabled=disabled,
         )
-    if user["role"] == "Lecturer":
-        st.sidebar.caption("Lecturer access is scoped to your own records.")
 
     st.sidebar.divider()
     with st.sidebar:
@@ -393,6 +493,12 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
     fig.update_layout(height=390, yaxis_title="Percent", margin=dict(l=20, r=20, t=55, b=20))
     st.plotly_chart(fig, use_container_width=True)
 
+    render_average_cgpa_comparison(
+        spm_records,
+        ["SPM_MATH", "SPM_ADDMATH"],
+        "Average CGPA Comparison: SPM MATH vs SPM ADDMATH",
+    )
+
     st.subheader("SPM ADDMATH vs SPM MATH Grade Matrix")
     if {"SPM_MATH", "SPM_ADDMATH"}.issubset(selected_spm_columns):
         render_grade_matrix(spm_records, "SPM_MATH", "SPM_ADDMATH")
@@ -446,6 +552,20 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
         render_grade_proportion_chart(pspm_records, ["PSPM_DM015", "PSPM_DM025"], "PSPM DM015 vs PSPM DM025 Grade Proportion")
     with right:
         render_grade_proportion_chart(pspm_records, ["PSPM_SEM1", "PSPM_SEM2"], "PSPM SEM1 vs PSPM SEM2 Grade Proportion")
+
+    left, right = st.columns(2)
+    with left:
+        render_average_cgpa_comparison(
+            pspm_records,
+            ["PSPM_DM015", "PSPM_DM025"],
+            "Average CGPA: PSPM DM015 vs PSPM DM025",
+        )
+    with right:
+        render_average_cgpa_comparison(
+            pspm_records,
+            ["PSPM_SEM1", "PSPM_SEM2"],
+            "Average CGPA: PSPM SEM1 vs PSPM SEM2",
+        )
 
     left, right = st.columns(2)
     with left:
@@ -588,52 +708,57 @@ def class_progress_page(records: pd.DataFrame, user: dict, filters: dict[str, li
     progress_rank_page(records, filters, "KELAS", "Class")
 
 
+def program_progress_page(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
+    page_header(
+        "PROGRAM PROGRESS",
+        "Rank program progress by diagnostic, SPM, and PSPM performance across SES, SDS, and overall.",
+        user["role"],
+    )
+    progress_rank_page(records, filters, "PROGRAM", "Program")
+
+
 def progress_rank_page(records: pd.DataFrame, filters: dict[str, list[str]], group_column: str, group_label: str) -> None:
-    type_columns = {
-        "Diagnostic": selected_ujian_columns(filters, DIAGNOSTIC_COLUMNS),
-        "SPM": selected_ujian_columns(filters, SPM_TEST_COLUMNS),
-        "PSPM": selected_ujian_columns(filters, GRADE_TEST_COLUMNS),
-    }
-    active_columns = [column for columns in type_columns.values() for column in columns]
-    if not active_columns:
+    diagnostic_columns = selected_ujian_columns(filters, DIAGNOSTIC_COLUMNS)
+    spm_columns = selected_ujian_columns(filters, SPM_TEST_COLUMNS)
+    pspm_columns = selected_ujian_columns(filters, GRADE_TEST_COLUMNS)
+    if not [*diagnostic_columns, *spm_columns, *pspm_columns]:
         blank_state("The selected Ujian filter does not include diagnostic, SPM, or PSPM assessments.")
         return
-    performance_long = assessment_long_frame(records, active_columns)
-    if performance_long.empty:
+
+    diagnostic_long = assessment_long_frame(records, diagnostic_columns)
+    spm_long = cgpa_long_frame(records, spm_columns, "SPM")
+    pspm_long = cgpa_long_frame(records, pspm_columns, "PSPM")
+    overall_long = overall_progress_frame(diagnostic_long, spm_long, pspm_long)
+    if overall_long.empty:
         blank_state("No assessment data match the selected filters.")
         return
 
     kpis = st.columns(4)
-    kpis[0].metric("Students", f"{performance_long['NO MATRIK'].nunique():,}")
-    kpis[1].metric("Assessments", f"{performance_long['Test'].nunique():,}")
-    kpis[2].metric("Overall Score", f"{performance_long['Score'].mean():.1f}")
-    kpis[3].metric(f"{group_label}s", f"{performance_long[group_column].nunique():,}" if group_column in performance_long else "0")
+    kpis[0].metric("PELAJAR", f"{overall_long['NO MATRIK'].nunique():,}")
+    kpis[1].metric("Assessments", f"{overall_long['Test'].nunique():,}")
+    kpis[2].metric("CGPA", f"{overall_long['Value'].mean():.2f}")
+    kpis[3].metric(f"{group_label}s", f"{overall_long[group_column].nunique():,}" if group_column in overall_long else "0")
 
-    for system_label, system_frame in split_system_frames(performance_long):
-        st.subheader(system_label)
-        cols = st.columns(3)
-        for index, (assessment_type, columns) in enumerate(type_columns.items()):
-            with cols[index]:
-                type_frame = system_frame[system_frame["Test"].isin(columns)] if columns else system_frame.iloc[0:0]
-                rank = ranked_performance(type_frame, group_column)
-                render_rank_chart(
-                    rank,
-                    group_column,
-                    f"{system_label} {assessment_type} Rank",
-                    f"{group_column}_{system_label}_{assessment_type}_rank_chart",
-                )
-        table_tabs = st.tabs(["Diagnostic", "SPM", "PSPM"])
-        for tab, (assessment_type, columns) in zip(table_tabs, type_columns.items()):
-            with tab:
-                type_frame = system_frame[system_frame["Test"].isin(columns)] if columns else system_frame.iloc[0:0]
-                rank = ranked_performance(type_frame, group_column)
-                if rank.empty:
-                    blank_state(f"No {assessment_type.lower()} records for {system_label}.")
-                else:
-                    st.dataframe(rank, hide_index=True, use_container_width=True)
+    sections = [("Overall", overall_long, "Value", "CGPA", "CGPA")]
+    for column in [*spm_columns, *diagnostic_columns, *pspm_columns]:
+        section = progress_section_for_test(column, diagnostic_long, spm_long, pspm_long)
+        if section:
+            sections.append(section)
+
+    tabs = st.tabs([section[0] for section in sections])
+    for tab, (section_label, frame, value_column, metric_label, axis_title) in zip(tabs, sections):
+        with tab:
+            render_progress_section(
+                frame,
+                group_column,
+                section_label,
+                value_column,
+                metric_label,
+                axis_title,
+            )
 
 
-def download_page(records: pd.DataFrame, user: dict) -> None:
+def download_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> None:
     page_header(
         "DOWNLOAD",
         "Choose fields, filter rows, and export the selected dataset.",
@@ -684,7 +809,176 @@ def download_page(records: pd.DataFrame, user: dict) -> None:
 
     export_df = filtered[selected_columns].copy()
     st.dataframe(export_df.head(500), hide_index=True, use_container_width=True)
-    render_download_buttons(export_df, "custom_download_filtered_data", "Custom Download Data")
+    render_download_buttons(export_df, "custom_download_filtered_data", "Custom Download Data", user, store)
+
+
+def admin_page(user: dict, store: SupabaseStore) -> None:
+    page_header(
+        "ADMIN",
+        "Manage user access and monitor application activity.",
+        user["role"],
+    )
+    if user["role"] != "Admin":
+        st.error("You do not have permission to access ADMIN.")
+        return
+
+    tab_access, tab_activity = st.tabs(["User Access", "App Activity"])
+    with tab_access:
+        admin_user_access_section(user, store)
+    with tab_activity:
+        admin_activity_section(store)
+
+
+def admin_user_access_section(user: dict, store: SupabaseStore) -> None:
+    st.subheader("User Access")
+    st.caption("Register, update, activate/deactivate, or delete Executive and Lecturer access by IC number.")
+    users = load_app_users(store)
+    app_user_errors = [error for error in store.last_errors if "app_users" in str(error).lower()]
+    if app_user_errors and users.empty:
+        st.warning("The app_users table is not available yet. Create it in Supabase before managing access here.")
+        with st.expander("Required SQL"):
+            st.code(app_users_setup_sql(), language="sql")
+        return
+
+    editable_users = users.copy()
+    if not editable_users.empty and "role" in editable_users.columns:
+        editable_users = editable_users[editable_users["role"].isin(["Executive", "Lecturer"])]
+
+    options = {"New access": None}
+    if not editable_users.empty and "id" in editable_users.columns:
+        for _, row in editable_users.iterrows():
+            label = f"{row.get('ic_number', '')} | {row.get('full_name', '')} | {row.get('role', '')}"
+            options[label] = row.get("id")
+
+    selected = st.selectbox("Mode", list(options.keys()), key="admin_access_mode")
+    selected_row = None
+    if selected != "New access":
+        selected_id = str(options[selected])
+        selected_row = editable_users.loc[editable_users["id"].astype(str) == selected_id].iloc[0]
+
+    with st.form("admin_access_form"):
+        ic_number = st.text_input("IC Number", value=field_value(selected_row, "ic_number"))
+        full_name = st.text_input("User's Name", value=field_value(selected_row, "full_name"))
+        current_role = field_value(selected_row, "role") or "Executive"
+        role = st.selectbox("Role", ["Executive", "Lecturer"], index=["Executive", "Lecturer"].index(current_role) if current_role in ["Executive", "Lecturer"] else 0)
+        pensyarah = st.text_input("Pensyarah Name (optional for Lecturer)", value=field_value(selected_row, "pensyarah"))
+        is_active = st.checkbox("Active", value=bool(selected_row.get("is_active", True)) if selected_row is not None and "is_active" in selected_row else True)
+        submitted = st.form_submit_button("Save access", use_container_width=True)
+        if submitted:
+            payload = {
+                "ic_number": normalize_ic_number(ic_number),
+                "full_name": full_name.strip(),
+                "role": role,
+                "pensyarah": pensyarah.strip(),
+                "is_active": is_active,
+            }
+            record_id = None if selected == "New access" else options[selected]
+            save_app_user(store, payload, record_id)
+            store.log_edit_history(
+                user,
+                "USER ACCESS",
+                "app_users",
+                record_id=record_id,
+                details=f"Saved {role} access for {payload['full_name']} ({payload['ic_number']}). Active: {is_active}.",
+            )
+            st.success("User access saved successfully.")
+            st.rerun()
+
+    if editable_users.empty:
+        blank_state("No Executive or Lecturer access has been registered yet.")
+    else:
+        display_columns = ["ic_number", "full_name", "role", "pensyarah", "is_active", "updated_at"]
+        access_table = editable_users[[column for column in display_columns if column in editable_users.columns]].rename(
+            columns={
+                "ic_number": "IC NUMBER",
+                "full_name": "USER'S NAME",
+                "role": "ROLE",
+                "pensyarah": "PENSYARAH",
+                "is_active": "ACTIVE",
+                "updated_at": "UPDATED AT",
+            }
+        )
+        st.dataframe(access_table, hide_index=True, use_container_width=True)
+        delete_options = {
+            f"{row.get('ic_number', '')} | {row.get('full_name', '')} | {row.get('role', '')}": row.get("id")
+            for _, row in editable_users.iterrows()
+            if row.get("id") is not None
+        }
+        selected_delete = st.multiselect("Select access to delete", list(delete_options.keys()))
+        if st.button("Delete selected access", type="secondary", disabled=not selected_delete):
+            ids = [delete_options[label] for label in selected_delete]
+            deleted = delete_app_user_records(store, ids)
+            store.log_edit_history(
+                user,
+                "DELETE USER ACCESS",
+                "app_users",
+                details=f"Deleted {deleted} user access record(s): {', '.join(selected_delete[:10])}",
+            )
+            st.success(f"Deleted {deleted} user access record(s).")
+            st.rerun()
+
+
+def admin_activity_section(store: SupabaseStore) -> None:
+    st.subheader("App Activity")
+    st.caption("Review create, update, delete, import, and download activity by app users.")
+    history = store.get_edit_history()
+    if history.empty:
+        blank_state("No edit activity has been recorded yet.")
+        return
+
+    display = history.copy()
+    action_options = sorted(display.get("action", pd.Series(dtype=str)).dropna().unique().tolist())
+    dataset_options = sorted(display.get("dataset", pd.Series(dtype=str)).dropna().unique().tolist())
+    user_options = sorted(display.get("user_name", pd.Series(dtype=str)).dropna().unique().tolist())
+    ic_options = sorted(display.get("user_id", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
+
+    filters = st.columns(4)
+    selected_actions = filters[0].multiselect("Action", action_options, placeholder="All actions")
+    selected_datasets = filters[1].multiselect("Dataset", dataset_options, placeholder="All datasets")
+    selected_users = filters[2].multiselect("User", user_options, placeholder="All users")
+    selected_ics = filters[3].multiselect("IC Number", ic_options, placeholder="All ICs")
+
+    if selected_actions:
+        display = display[display["action"].isin(selected_actions)]
+    if selected_datasets:
+        display = display[display["dataset"].isin(selected_datasets)]
+    if selected_users:
+        display = display[display["user_name"].isin(selected_users)]
+    if selected_ics and "user_id" in display:
+        display = display[display["user_id"].astype(str).isin(selected_ics)]
+
+    search_text = st.text_input("Search details", placeholder="Search IC number, action, user, dataset, or details")
+    if search_text.strip():
+        display = search_any_columns(
+            display,
+            search_text,
+            ["user_id", "user_name", "user_role", "action", "dataset", "record_id", "details"],
+        )
+
+    st.metric("History entries", f"{len(display):,}")
+    columns = [
+        "created_at",
+        "user_id",
+        "user_name",
+        "user_role",
+        "action",
+        "dataset",
+        "record_id",
+        "details",
+    ]
+    history_table = display[[column for column in columns if column in display.columns]].rename(
+        columns={
+            "created_at": "DATE / TIME",
+            "user_id": "IC NUMBER",
+            "user_name": "USER",
+            "user_role": "ROLE",
+            "action": "ACTION",
+            "dataset": "DATASET",
+            "record_id": "RECORD ID",
+            "details": "DETAILS",
+        }
+    )
+    st.dataframe(history_table, hide_index=True, use_container_width=True)
 
 
 def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> None:
@@ -693,10 +987,6 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
         "Create, update, delete, import, and validate academic records.",
         user["role"],
     )
-    if user["role"] != "Admin":
-        st.error("You do not have permission to access DATA MANAGEMENT.")
-        return
-
     render_data_management_success()
     refs = store.get_reference_data()
     dataset_label = st.selectbox("Dataset", list(DATASET_OPTIONS.keys()), key="dm_dataset")
@@ -704,11 +994,11 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
     dataset = dataset_frame(dataset_key, refs)
     writable_columns = store.writable_columns(dataset_key)
     tab_records, tab_form, tab_import, tab_refs = st.tabs(
-        ["Records", "Create or Update", "Bulk Import", "Reference Data"]
+        ["View or Delete", "Create or Update", "Bulk Import", "Reference Data"]
     )
 
     with tab_records:
-        st.subheader(f"{dataset_label} Records")
+        st.subheader(f"{dataset_label} View or Delete")
         st.caption("Search, review, and delete records from the selected Supabase dataset.")
         record_search = st.text_input(
             "Search records",
@@ -722,7 +1012,15 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
         selected_ids = [delete_options[label] for label in selected_labels]
         if st.button("Delete selected records", type="secondary", disabled=not selected_ids):
             deleted = store.delete_reference(dataset_key, selected_ids)
+            history_logged = store.log_edit_history(
+                user,
+                "DELETE",
+                dataset_key,
+                details=f"Deleted {deleted} record(s): {', '.join(str(record_id) for record_id in selected_ids[:20])}",
+            )
             set_data_management_success(f"Successfully deleted {deleted} {dataset_label.lower()} record(s).")
+            if not history_logged:
+                set_data_management_warning("The data was deleted, but edit history was not recorded because the edit_history table is unavailable.")
             st.rerun()
 
     with tab_form:
@@ -745,9 +1043,19 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
 
             submitted = st.form_submit_button("Save record", use_container_width=True)
             if submitted:
-                store.upsert_reference(dataset_key, payload, None if selected == "New record" else update_options[selected])
+                record_id = None if selected == "New record" else update_options[selected]
+                store.upsert_reference(dataset_key, payload, record_id)
                 action = "created" if selected == "New record" else "updated"
+                history_logged = store.log_edit_history(
+                    user,
+                    action.upper(),
+                    dataset_key,
+                    record_id=record_id,
+                    details=f"{action.title()} {dataset_label.lower()} record with fields: {', '.join(payload.keys())}",
+                )
                 set_data_management_success(f"Successfully {action} {dataset_label.lower()} record.")
+                if not history_logged:
+                    set_data_management_warning("The data was saved, but edit history was not recorded because the edit_history table is unavailable.")
                 st.rerun()
 
     with tab_import:
@@ -804,9 +1112,20 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
                         st.write(errors)
                     elif st.button("Save imported data", type="primary"):
                         saved = store.bulk_upsert_reference(dataset_key, preview)
+                        history_logged = store.log_edit_history(
+                            user,
+                            "BULK IMPORT",
+                            dataset_key,
+                            details=(
+                                f"Saved {saved} {dataset_label.lower()} record(s). "
+                                f"Match column: {match_column}. Updated columns: {', '.join(selected_update_columns)}."
+                            ),
+                        )
                         set_data_management_success(
                             f"Bulk import successful. {saved} {dataset_label.lower()} record(s) saved."
                         )
+                        if not history_logged:
+                            set_data_management_warning("The import was saved, but edit history was not recorded because the edit_history table is unavailable.")
                         st.rerun()
                 except Exception as exc:
                     st.error(f"Unable to read uploaded file: {exc}")
@@ -861,17 +1180,43 @@ def search_dataset(df: pd.DataFrame, query: str, dataset_key: str) -> pd.DataFra
 
 def set_data_management_success(message: str) -> None:
     st.session_state["data_management_success"] = message
+    st.session_state["supabase_data_dirty"] = True
+
+
+def app_users_setup_sql() -> str:
+    return """create table if not exists public.app_users (
+    id bigint generated by default as identity primary key,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    ic_number text not null unique,
+    full_name text not null,
+    role text not null check (role in ('Executive', 'Lecturer')),
+    pensyarah text,
+    is_active boolean not null default true
+);
+
+create index if not exists app_users_ic_number_idx
+on public.app_users (ic_number);
+
+create index if not exists app_users_role_idx
+on public.app_users (role);"""
+
+
+def set_data_management_warning(message: str) -> None:
+    st.session_state["data_management_warning"] = message
 
 
 def render_data_management_success() -> None:
     message = st.session_state.pop("data_management_success", None)
-    if not message:
-        return
-    st.success(message, icon="✅")
-    try:
-        st.toast(message, icon="✅")
-    except Exception:
-        pass
+    warning = st.session_state.pop("data_management_warning", None)
+    if message:
+        st.success(message)
+        try:
+            st.toast(message)
+        except Exception:
+            pass
+    if warning:
+        st.warning(warning)
 
 
 def selected_upload_template(
@@ -915,9 +1260,6 @@ def validate_selected_import_frame(
     for row_number, row in df.iterrows():
         if row.get(match_column, "") == "":
             errors.append(f"Row {row_number + 2}: {match_column} is required")
-        update_values = [row.get(column, "") for column in allowed_update_columns]
-        if not any(value != "" for value in update_values):
-            errors.append(f"Row {row_number + 2}: at least one selected update column is required")
 
     return df, errors
 
@@ -967,14 +1309,20 @@ def dataset_form_fields(columns: list[str], selected_row: pd.Series | None) -> d
     return payload
 
 
-def render_download_buttons(df: pd.DataFrame, file_stem: str, title: str) -> None:
+def render_download_buttons(
+    df: pd.DataFrame,
+    file_stem: str,
+    title: str,
+    user: dict | None = None,
+    store: SupabaseStore | None = None,
+) -> None:
     export_df = df.copy()
     if export_df.empty:
         return
     st.markdown('<div class="download-strip">', unsafe_allow_html=True)
     col_csv, col_excel, col_pdf_data, spacer = st.columns([1, 1, 1.2, 4.8])
     with col_csv:
-        st.download_button(
+        clicked = st.download_button(
             "Download CSV",
             export_df.to_csv(index=False).encode("utf-8-sig"),
             file_name=f"{file_stem}.csv",
@@ -982,8 +1330,10 @@ def render_download_buttons(df: pd.DataFrame, file_stem: str, title: str) -> Non
             use_container_width=True,
             key=f"{file_stem}_csv",
         )
+        if clicked:
+            log_download_activity(user, store, title, "CSV", export_df)
     with col_excel:
-        st.download_button(
+        clicked = st.download_button(
             "Download Excel",
             dataframe_to_excel_bytes(export_df, title),
             file_name=f"{file_stem}.xlsx",
@@ -991,8 +1341,10 @@ def render_download_buttons(df: pd.DataFrame, file_stem: str, title: str) -> Non
             use_container_width=True,
             key=f"{file_stem}_xlsx",
         )
+        if clicked:
+            log_download_activity(user, store, title, "Excel", export_df)
     with col_pdf_data:
-        st.download_button(
+        clicked = st.download_button(
             "Download PDF (Data)",
             dataframe_to_pdf_bytes(export_df, title),
             file_name=f"{file_stem}_data.pdf",
@@ -1000,7 +1352,26 @@ def render_download_buttons(df: pd.DataFrame, file_stem: str, title: str) -> Non
             use_container_width=True,
             key=f"{file_stem}_pdf_data",
         )
+        if clicked:
+            log_download_activity(user, store, title, "PDF", export_df)
     st.markdown("</div>", unsafe_allow_html=True)
+
+
+def log_download_activity(
+    user: dict | None,
+    store: SupabaseStore | None,
+    title: str,
+    file_type: str,
+    export_df: pd.DataFrame,
+) -> None:
+    if not user or store is None:
+        return
+    store.log_edit_history(
+        user,
+        "DOWNLOAD",
+        "download",
+        details=f"Downloaded {file_type} file: {title}. Rows: {len(export_df)}. Columns: {', '.join(export_df.columns.astype(str).tolist())}",
+    )
 
 
 def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str) -> bytes:
@@ -1273,10 +1644,63 @@ def render_grade_matrix(records: pd.DataFrame, row_column: str, column_column: s
     st.dataframe(matrix, use_container_width=True)
 
 
+def cgpa_map_for_column(column: str) -> dict[str, float]:
+    if column in SPM_TEST_COLUMNS:
+        return SPM_CGPA_MAP
+    if column in GRADE_TEST_COLUMNS:
+        return PSPM_CGPA_MAP
+    return {}
+
+
+def cgpa_series(values: pd.Series, column: str) -> pd.Series:
+    mapping = cgpa_map_for_column(column)
+    return values.astype(str).str.strip().map(mapping)
+
+
+def average_cgpa_frame(records: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for column in columns:
+        if column not in records.columns:
+            continue
+        cgpa = cgpa_series(records[column], column)
+        valid = cgpa.dropna()
+        rows.append(
+            {
+                "Assessment": column,
+                "Average CGPA": round(float(valid.mean()), 2) if not valid.empty else None,
+                "Records": int(valid.count()),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def render_average_cgpa_comparison(records: pd.DataFrame, columns: list[str], title: str) -> None:
+    comparison = average_cgpa_frame(records, columns).dropna(subset=["Average CGPA"])
+    if comparison.empty:
+        blank_state(f"No CGPA data available for {title}.")
+        return
+    fig = px.bar(
+        comparison,
+        x="Assessment",
+        y="Average CGPA",
+        color="Assessment",
+        text="Average CGPA",
+        title=title,
+        custom_data=["Records"],
+        color_discrete_sequence=["#28277f", "#0f766e", "#facc15", "#ef1c2a"],
+    )
+    fig.update_traces(
+        texttemplate="%{text:.2f}",
+        hovertemplate="%{x}<br>Average CGPA: %{y:.2f}<br>Records: %{customdata[0]:,}<extra></extra>",
+    )
+    fig.update_layout(height=350, yaxis_range=[0, 4], margin=dict(l=20, r=20, t=55, b=20), showlegend=False)
+    st.plotly_chart(fig, use_container_width=True)
+
+
 def score_series(values: pd.Series, column: str) -> pd.Series:
     if column in DIAGNOSTIC_COLUMNS:
         return pd.to_numeric(values, errors="coerce")
-    return values.astype(str).str.strip().map(GRADE_SCORE_MAP)
+    return cgpa_series(values, column)
 
 
 def assessment_long_frame(records: pd.DataFrame, test_columns: list[str]) -> pd.DataFrame:
@@ -1307,22 +1731,423 @@ def assessment_long_frame(records: pd.DataFrame, test_columns: list[str]) -> pd.
     return combined
 
 
+def cgpa_long_frame(records: pd.DataFrame, test_columns: list[str], assessment_type: str) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    identity_columns = [
+        "NO MATRIK",
+        "NAMA PELAJAR",
+        "KELAS",
+        "PENSYARAH",
+        "JURUSAN",
+        "PROGRAM",
+        "SISTEM",
+        "SUBJEK",
+    ]
+    available_identity = [column for column in identity_columns if column in records.columns]
+    for column in test_columns:
+        if column not in records.columns:
+            continue
+        frame = records[available_identity].copy()
+        frame["Test"] = column
+        frame["Assessment Type"] = assessment_type
+        frame["Raw Value"] = records[column]
+        frame["CGPA"] = cgpa_series(records[column], column)
+        frames.append(frame)
+    if not frames:
+        return pd.DataFrame(columns=[*identity_columns, "Test", "Assessment Type", "Raw Value", "CGPA"])
+    combined = pd.concat(frames, ignore_index=True)
+    combined = combined.dropna(subset=["CGPA"])
+    return combined
+
+
+def overall_progress_frame(
+    diagnostic_long: pd.DataFrame,
+    spm_long: pd.DataFrame,
+    pspm_long: pd.DataFrame,
+) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    if not diagnostic_long.empty:
+        diagnostic = diagnostic_long.copy()
+        diagnostic["Assessment Type"] = "Diagnostic"
+        diagnostic["Value"] = diagnostic["Score"] / 25
+        frames.append(diagnostic)
+    if not spm_long.empty:
+        spm = spm_long.copy()
+        spm["Value"] = spm["CGPA"]
+        frames.append(spm)
+    if not pspm_long.empty:
+        pspm = pspm_long.copy()
+        pspm["Value"] = pspm["CGPA"]
+        frames.append(pspm)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True).dropna(subset=["Value"])
+
+
+def progress_section_for_test(
+    column: str,
+    diagnostic_long: pd.DataFrame,
+    spm_long: pd.DataFrame,
+    pspm_long: pd.DataFrame,
+) -> tuple[str, pd.DataFrame, str, str, str] | None:
+    if column in DIAGNOSTIC_COLUMNS:
+        frame = diagnostic_long[diagnostic_long["Test"] == column]
+        return column, frame, "Score", "Average Mark", "Average Mark"
+    if column in SPM_TEST_COLUMNS:
+        frame = spm_long[spm_long["Test"] == column]
+        return column, frame, "CGPA", "Average CGPA", "Average CGPA"
+    if column in GRADE_TEST_COLUMNS:
+        frame = pspm_long[pspm_long["Test"] == column]
+        return column, frame, "CGPA", "Average CGPA", "Average CGPA"
+    return None
+
+
+def ranked_metric(
+    frame: pd.DataFrame,
+    group_column: str,
+    value_column: str,
+    metric_label: str,
+) -> pd.DataFrame:
+    if frame.empty or group_column not in frame or value_column not in frame:
+        return pd.DataFrame(columns=["Rank", group_column, metric_label, "PELAJAR"])
+    clean = frame[
+        frame[group_column].notna()
+        & (frame[group_column].astype(str).str.strip() != "")
+        & frame[value_column].notna()
+    ].copy()
+    if clean.empty:
+        return pd.DataFrame(columns=["Rank", group_column, metric_label, "PELAJAR"])
+    rank = (
+        clean.groupby(group_column)
+        .agg(
+            **{
+                metric_label: (value_column, "mean"),
+                "PELAJAR": ("NO MATRIK", "nunique"),
+            }
+        )
+        .reset_index()
+        .sort_values(metric_label, ascending=False)
+    )
+    rank.insert(0, "Rank", range(1, len(rank) + 1))
+    rank[metric_label] = rank[metric_label].round(2)
+    return rank
+
+
+def selected_plotly_points(event: object) -> list[dict]:
+    if not event:
+        return []
+    try:
+        selection = event.get("selection", {})
+    except AttributeError:
+        selection = getattr(event, "selection", {})
+    if not selection:
+        return []
+    try:
+        return selection.get("points", []) or []
+    except AttributeError:
+        return getattr(selection, "points", []) or []
+
+
+def selected_dataframe_rows(event: object) -> list[int]:
+    if not event:
+        return []
+    try:
+        selection = event.get("selection", {})
+    except AttributeError:
+        selection = getattr(event, "selection", {})
+    if not selection:
+        return []
+    try:
+        return selection.get("rows", []) or []
+    except AttributeError:
+        return getattr(selection, "rows", []) or []
+
+
+def render_selected_students(title: str, frame: pd.DataFrame) -> None:
+    if frame.empty:
+        blank_state("No students match the selected item.")
+        return
+    columns = [column for column in STUDENT_DETAIL_COLUMNS if column in frame.columns]
+    detail = frame[columns].drop_duplicates().sort_values(
+        [column for column in ["NAMA PELAJAR", "NO MATRIK"] if column in columns],
+        na_position="last",
+    )
+    st.markdown(f"**{title}**")
+    st.dataframe(detail, hide_index=True, use_container_width=True)
+
+
+def render_progress_section(
+    frame: pd.DataFrame,
+    group_column: str,
+    section_label: str,
+    value_column: str,
+    metric_label: str,
+    axis_title: str,
+) -> None:
+    if frame.empty:
+        blank_state(f"No {section_label.lower()} records match the selected filters.")
+        return
+    system_tabs = st.tabs(["Overall", "SES", "SDS"])
+    for tab, (system_label, system_frame) in zip(system_tabs, split_system_frames(frame)):
+        with tab:
+            rank = ranked_metric(system_frame, group_column, value_column, metric_label)
+            selected_groups: list[str] = []
+            left, right = st.columns([1.1, 1])
+            with left:
+                selected_groups.extend(
+                    render_rank_chart(
+                    rank,
+                    group_column,
+                    f"{section_label} {system_label} Rank",
+                    metric_label,
+                    axis_title,
+                    f"{group_column}_{section_label}_{system_label}_rank_chart",
+                    )
+                )
+            with right:
+                if rank.empty:
+                    blank_state(f"No {section_label.lower()} records for {system_label}.")
+                else:
+                    try:
+                        table_event = st.dataframe(
+                            rank,
+                            hide_index=True,
+                            use_container_width=True,
+                            on_select="rerun",
+                            selection_mode="single-row",
+                            key=f"{group_column}_{section_label}_{system_label}_rank_table",
+                        )
+                        for row_index in selected_dataframe_rows(table_event):
+                            if 0 <= row_index < len(rank):
+                                selected_groups.append(str(rank.iloc[row_index][group_column]))
+                    except TypeError:
+                        st.dataframe(rank, hide_index=True, use_container_width=True)
+            if selected_groups and group_column in system_frame.columns:
+                selected_set = {str(value) for value in selected_groups}
+                selected_frame = system_frame[system_frame[group_column].astype(str).isin(selected_set)]
+                render_selected_students(
+                    f"Selected Students: {', '.join(sorted(selected_set))}",
+                    selected_frame,
+                )
+            render_progress_distribution(system_frame, group_column, section_label, system_label)
+
+
+def render_progress_distribution(
+    frame: pd.DataFrame,
+    group_column: str,
+    section_label: str,
+    system_label: str,
+) -> None:
+    if section_label in [*SPM_TEST_COLUMNS, *GRADE_TEST_COLUMNS]:
+        render_progress_grade_heatmap(frame, group_column, section_label, system_label)
+    elif section_label in DIAGNOSTIC_COLUMNS:
+        render_diagnostic_mark_distribution(frame, section_label, system_label)
+
+
+def render_progress_grade_heatmap(
+    frame: pd.DataFrame,
+    group_column: str,
+    test_name: str,
+    system_label: str,
+) -> None:
+    if frame.empty or group_column not in frame or "Raw Value" not in frame:
+        return
+    clean = frame[[group_column, "Raw Value"]].copy()
+    clean[group_column] = clean[group_column].astype("string").str.strip()
+    clean["GRADE"] = clean["Raw Value"].astype("string").str.strip()
+    clean = clean[
+        clean[group_column].notna()
+        & (clean[group_column] != "")
+        & clean["GRADE"].notna()
+        & (clean["GRADE"] != "")
+    ]
+    if clean.empty:
+        return
+
+    grade_order = SPM_GRADE_ORDER if test_name in SPM_TEST_COLUMNS else PSPM_GRADE_ORDER
+    matrix = pd.crosstab(clean[group_column], clean["GRADE"]).reindex(columns=grade_order, fill_value=0)
+    matrix = matrix.loc[matrix.sum(axis=1) > 0]
+    if matrix.empty:
+        return
+
+    max_groups = 30
+    if len(matrix) > max_groups:
+        top_index = matrix.sum(axis=1).sort_values(ascending=False).head(max_groups).index
+        matrix = matrix.loc[top_index]
+        st.caption(f"Grade heatmap shows the {max_groups} largest {group_column.lower()} groups by available result count.")
+
+    heatmap_points = matrix.reset_index().melt(
+        id_vars=group_column,
+        var_name="Grade",
+        value_name="Students",
+    )
+    heatmap_points["Label"] = heatmap_points["Students"].map(lambda value: f"{int(value):,}" if value else "")
+    fig = px.scatter(
+        heatmap_points,
+        x="Grade",
+        y=group_column,
+        color="Students",
+        size=[1] * len(heatmap_points),
+        text="Label",
+        color_continuous_scale="YlGnBu",
+        category_orders={"Grade": grade_order, group_column: matrix.index.tolist()},
+        title=f"{test_name} Grade Distribution Heatmap ({system_label})",
+        custom_data=[group_column, "Grade", "Students"],
+    )
+    fig.update_traces(
+        marker=dict(symbol="square", size=28, sizemode="diameter", line=dict(width=0.5, color="#ffffff")),
+        textposition="middle center",
+        hovertemplate=f"{group_column}: %{{customdata[0]}}<br>Grade: %{{customdata[1]}}<br>Students: %{{customdata[2]:,}}<extra></extra>",
+    )
+    fig.update_layout(
+        height=min(760, max(360, 28 * len(matrix) + 130)),
+        xaxis_title="Grade",
+        yaxis_title=group_column,
+        showlegend=False,
+        clickmode="event+select",
+        margin=dict(l=20, r=20, t=55, b=20),
+    )
+    fig.update_yaxes(categoryorder="array", categoryarray=list(reversed(matrix.index.tolist())))
+    chart_key = f"{group_column}_{test_name}_{system_label}_grade_heatmap"
+    try:
+        event = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            key=chart_key,
+            on_select="rerun",
+            selection_mode="points",
+        )
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        return
+
+    points = selected_plotly_points(event)
+    if not points:
+        return
+    point = points[0]
+    custom_data = point.get("customdata")
+    selected_group = ""
+    selected_grade = ""
+    if isinstance(custom_data, (list, tuple)) and len(custom_data) >= 2:
+        selected_group = str(custom_data[0]).strip()
+        selected_grade = str(custom_data[1]).strip()
+    if not selected_group:
+        selected_group = str(point.get("y", "")).strip()
+    if not selected_grade:
+        selected_grade = str(point.get("x", "")).strip()
+    if not selected_group or not selected_grade:
+        return
+    selected_frame = frame[
+        (frame[group_column].astype(str).str.strip() == selected_group)
+        & (frame["Raw Value"].astype("string").str.strip() == selected_grade)
+    ]
+    render_selected_students(
+        f"Selected Students: {selected_group} | {test_name} {selected_grade}",
+        selected_frame,
+    )
+
+
+def render_diagnostic_mark_distribution(frame: pd.DataFrame, test_name: str, system_label: str) -> None:
+    if frame.empty or "Score" not in frame:
+        return
+    scores = pd.to_numeric(frame["Score"], errors="coerce").dropna()
+    if scores.empty:
+        return
+    distribution = scores.round(2).value_counts().sort_index().reset_index()
+    distribution.columns = ["Mark", "Students"]
+    distribution["Mark Label"] = distribution["Mark"].map(lambda value: f"{value:g}")
+    total = distribution["Students"].sum()
+    distribution["Percent"] = distribution["Students"] / total * 100 if total else 0
+
+    fig = px.bar(
+        distribution,
+        x="Mark Label",
+        y="Students",
+        color="Students",
+        text="Students",
+        title=f"{test_name} Mark Distribution ({system_label})",
+        custom_data=["Mark", "Percent"],
+        color_continuous_scale="YlGnBu",
+    )
+    fig.update_traces(
+        texttemplate="%{text:,}",
+        textposition="outside",
+        hovertemplate="Mark: %{customdata[0]:g}<br>Students: %{y:,}<br>Percent: %{customdata[1]:.1f}%<extra></extra>",
+    )
+    fig.update_layout(
+        height=min(520, max(340, 14 * len(distribution) + 260)),
+        yaxis_title="Students",
+        xaxis_title="Mark",
+        showlegend=False,
+        clickmode="event+select",
+        margin=dict(l=20, r=20, t=55, b=20),
+    )
+    fig.update_xaxes(type="category", categoryorder="array", categoryarray=distribution["Mark Label"].tolist())
+    chart_key = f"{test_name}_{system_label}_diagnostic_distribution"
+    try:
+        event = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            key=chart_key,
+            on_select="rerun",
+            selection_mode="points",
+        )
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        return
+
+    points = selected_plotly_points(event)
+    if not points:
+        return
+    point = points[0]
+    selected_mark = point.get("x")
+    if selected_mark is None:
+        custom_data = point.get("customdata")
+        if isinstance(custom_data, (list, tuple)) and custom_data:
+            selected_mark = custom_data[0]
+        elif custom_data is not None and hasattr(custom_data, "__len__") and not isinstance(custom_data, str):
+            try:
+                selected_mark = custom_data[0]
+            except Exception:
+                selected_mark = custom_data
+        else:
+            selected_mark = custom_data
+    if selected_mark is None:
+        point_number = point.get(
+            "point_number",
+            point.get("pointNumber", point.get("pointIndex", point.get("point_index"))),
+        )
+        try:
+            point_index = int(point_number)
+        except (TypeError, ValueError):
+            point_index = None
+        if point_index is not None and 0 <= point_index < len(distribution):
+            selected_mark = distribution.iloc[point_index]["Mark"]
+    selected_mark_value = pd.to_numeric(pd.Series([selected_mark]), errors="coerce").iloc[0]
+    if pd.isna(selected_mark_value):
+        return
+    selected_frame = frame[pd.to_numeric(frame["Score"], errors="coerce").round(2) == round(float(selected_mark_value), 2)]
+    render_selected_students(
+        f"Selected Students: {test_name} Mark {selected_mark_value:g}",
+        selected_frame,
+    )
+
+
 def ranked_performance(performance_long: pd.DataFrame, group_column: str) -> pd.DataFrame:
     if performance_long.empty or group_column not in performance_long:
-        return pd.DataFrame(columns=["Rank", group_column, "Average Score", "Records", "Students"])
+        return pd.DataFrame(columns=["Rank", group_column, "Average Score", "PELAJAR"])
     performance_long = performance_long[
         performance_long[group_column].notna()
         & (performance_long[group_column].astype(str).str.strip() != "")
     ].copy()
     if performance_long.empty:
-        return pd.DataFrame(columns=["Rank", group_column, "Average Score", "Records", "Students"])
+        return pd.DataFrame(columns=["Rank", group_column, "Average Score", "PELAJAR"])
     rank = (
         performance_long.groupby(group_column)
         .agg(
             **{
                 "Average Score": ("Score", "mean"),
-                "Records": ("Score", "count"),
-                "Students": ("NO MATRIK", "nunique"),
+                "PELAJAR": ("NO MATRIK", "nunique"),
             }
         )
         .reset_index()
@@ -1346,22 +2171,49 @@ def split_system_frames(performance_long: pd.DataFrame) -> list[tuple[str, pd.Da
     return frames
 
 
-def render_rank_chart(rank: pd.DataFrame, group_column: str, title: str, chart_key: str) -> None:
+def render_rank_chart(
+    rank: pd.DataFrame,
+    group_column: str,
+    title: str,
+    metric_label: str,
+    axis_title: str,
+    chart_key: str,
+) -> list[str]:
     if rank.empty:
         blank_state(f"No records for {title}.")
-        return
+        return []
     fig = px.bar(
         rank.head(12),
-        x="Average Score",
+        x=metric_label,
         y=group_column,
         orientation="h",
         title=title,
-        color="Average Score",
+        color=metric_label,
         color_continuous_scale="YlGnBu",
-        hover_data=["Rank", "Records", "Students"],
+        hover_data=["Rank", "PELAJAR"],
     )
-    fig.update_layout(height=390, yaxis={"categoryorder": "total ascending"}, margin=dict(l=20, r=20, t=55, b=20))
-    st.plotly_chart(fig, use_container_width=True, key=chart_key)
+    fig.update_layout(
+        height=390,
+        xaxis_title=axis_title,
+        yaxis={"categoryorder": "total ascending"},
+        margin=dict(l=20, r=20, t=55, b=20),
+    )
+    try:
+        event = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            key=chart_key,
+            on_select="rerun",
+            selection_mode="points",
+        )
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        return []
+    return [
+        str(point.get("y")).strip()
+        for point in selected_plotly_points(event)
+        if point.get("y") is not None and str(point.get("y")).strip()
+    ]
 
 
 def split_people(value: object) -> list[str]:
@@ -1401,18 +2253,28 @@ def main() -> None:
         return
 
     user = st.session_state.user
+    render_user_badge(user)
+    if st.session_state.pop("supabase_data_dirty", False):
+        store.refresh_cache()
     loading_slot = st.empty()
     with loading_slot.container():
         page_header(
             "Loading Dashboard",
-            "Preparing Supabase data and applying your access permissions.",
+            "Preparing Supabase data and loading your assigned pages.",
             user["role"],
         )
         st.info("Loading data from Supabase...")
 
     base_records = store.fetch_base_records(user, results_mode="none")
     page, filters = sidebar_navigation(user, store, base_records)
-    if page in ["PSPM ANALYSIS", "DIAGNOSTIC ANALYSIS", "LECTURER PROGRESS", "CLASS PROGRESS", "DOWNLOAD"]:
+    if page in [
+        "PSPM ANALYSIS",
+        "DIAGNOSTIC ANALYSIS",
+        "LECTURER PROGRESS",
+        "CLASS PROGRESS",
+        "PROGRAM PROGRESS",
+        "DOWNLOAD",
+    ]:
         base_records = store.fetch_base_records(user, results_mode="all")
     elif page in ["SPM ANALYSIS", "DATA MANAGEMENT"]:
         base_records = store.fetch_base_records(user, results_mode="spm")
@@ -1431,8 +2293,12 @@ def main() -> None:
         lecturer_progress_page(records, user, filters)
     elif page == "CLASS PROGRESS":
         class_progress_page(records, user, filters)
+    elif page == "PROGRAM PROGRESS":
+        program_progress_page(records, user, filters)
     elif page == "DOWNLOAD":
-        download_page(records, user)
+        download_page(records, user, store)
+    elif page == "ADMIN":
+        admin_page(user, store)
     elif page == "DATA MANAGEMENT":
         data_management_page(records, user, store)
 

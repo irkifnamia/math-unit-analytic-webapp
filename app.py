@@ -41,7 +41,7 @@ APP_USERS_COLUMNS = [
     "pensyarah",
     "is_active",
 ]
-STUDENT_DETAIL_COLUMNS = ["NAMA PELAJAR", "NO MATRIK", "KELAS", "JURUSAN", "SISTEM"]
+STUDENT_DETAIL_COLUMNS = ["NAMA PELAJAR", "NO MATRIK", "KELAS", "PENSYARAH", "JURUSAN", "SISTEM"]
 DIAGNOSTIC_COLUMNS = ["AMAT_C1C2", "AMAT_C5", "AMAT_C8", "AMAT_C9C10"]
 GRADE_TEST_COLUMNS = ["PSPM_DM015", "PSPM_DM025", "PSPM_SEM1", "PSPM_SEM2"]
 PERFORMANCE_COLUMNS = [*GRADE_TEST_COLUMNS, *DIAGNOSTIC_COLUMNS]
@@ -2164,17 +2164,62 @@ def selected_dataframe_rows(event: object) -> list[int]:
         return getattr(selection, "rows", []) or []
 
 
-def render_selected_students(title: str, frame: pd.DataFrame) -> None:
+def render_selected_students(title: str, frame: pd.DataFrame, assessment_column: str | None = None) -> None:
     if frame.empty:
         blank_state("No students match the selected item.")
         return
-    columns = [column for column in STUDENT_DETAIL_COLUMNS if column in frame.columns]
-    detail = frame[columns].drop_duplicates().sort_values(
+    detail_source = frame.copy()
+    value_label = selected_assessment_value_label(assessment_column)
+    if value_label:
+        value_series = selected_assessment_value_series(detail_source, assessment_column)
+        if value_series is not None:
+            detail_source[value_label] = value_series
+
+    columns = [column for column in STUDENT_DETAIL_COLUMNS if column in detail_source.columns]
+    if value_label and value_label in detail_source.columns:
+        columns.append(value_label)
+    detail = detail_source[columns].drop_duplicates().sort_values(
         [column for column in ["NAMA PELAJAR", "NO MATRIK"] if column in columns],
         na_position="last",
     )
     st.markdown(f"**{title}**")
     render_data_table(detail, f"selected_students_{safe_key(title)}", title)
+
+
+def selected_assessment_value_label(assessment_column: str | None) -> str | None:
+    if not assessment_column:
+        return None
+    if is_diagnostic_assessment(assessment_column):
+        return "MARK"
+    if is_spm_assessment(assessment_column) or is_pspm_assessment(assessment_column):
+        return "GRADE"
+    return None
+
+
+def selected_assessment_value_series(frame: pd.DataFrame, assessment_column: str | None) -> pd.Series | None:
+    if not assessment_column:
+        return None
+    if is_diagnostic_assessment(assessment_column):
+        if "Score" in frame.columns:
+            return pd.to_numeric(frame["Score"], errors="coerce").map(format_mark_value)
+        if assessment_column in frame.columns:
+            return pd.to_numeric(frame[assessment_column], errors="coerce").map(format_mark_value)
+    if is_spm_assessment(assessment_column) or is_pspm_assessment(assessment_column):
+        if "Raw Value" in frame.columns:
+            return frame["Raw Value"].fillna("").astype(str).str.strip()
+        if assessment_column in frame.columns:
+            return frame[assessment_column].fillna("").astype(str).str.strip()
+    return None
+
+
+def format_mark_value(value: object) -> str:
+    if pd.isna(value):
+        return ""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value).strip()
+    return f"{number:g}"
 
 
 def render_progress_section(
@@ -2238,6 +2283,7 @@ def render_progress_section(
                 render_selected_students(
                     f"Selected Students: {', '.join(sorted(selected_set))}",
                     selected_frame,
+                    section_label,
                 )
             render_progress_distribution(system_frame, group_column, section_label, system_label)
 
@@ -2456,6 +2502,7 @@ def render_progress_grade_heatmap(
     render_selected_students(
         f"Selected Students: {selected_group} | {test_name} {selected_grade}",
         selected_frame,
+        test_name,
     )
 
 
@@ -2542,6 +2589,7 @@ def render_diagnostic_mark_distribution(frame: pd.DataFrame, test_name: str, sys
     render_selected_students(
         f"Selected Students: {test_name} Mark {selected_mark_value:g}",
         selected_frame,
+        test_name,
     )
 
 

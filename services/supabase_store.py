@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
@@ -233,7 +234,9 @@ class SupabaseStore:
         clean = clean_payload(payload, allowed_columns, include_empty=bool(record_id))
         if not clean:
             raise ValueError("No allowed Supabase columns were provided.")
-        if record_id:
+        record_id = normalize_supabase_id(record_id)
+        clean = with_updated_at(clean, table_name)
+        if not is_empty_value(record_id):
             self.client.table(table_name).update(clean).eq("id", record_id).execute()
         else:
             self.client.table(table_name).insert(clean).execute()
@@ -246,6 +249,9 @@ class SupabaseStore:
         if not record_ids:
             return 0
         table_name, _ = reference_table_and_columns(key)
+        record_ids = [record_id for record_id in (normalize_supabase_id(value) for value in record_ids) if not is_empty_value(record_id)]
+        if not record_ids:
+            return 0
         self.client.table(table_name).delete().in_("id", record_ids).execute()
         clear_cached_reference_data()
         return len(record_ids)
@@ -288,13 +294,14 @@ class SupabaseStore:
             payload = clean_payload(raw, allowed_columns, include_empty=True)
             if not payload:
                 continue
+            write_payload = with_updated_at(payload, table_name)
 
             if match_column == "id":
-                record_id = raw.get("id")
+                record_id = normalize_supabase_id(raw.get("id"))
                 if is_empty_value(record_id):
-                    self.client.table(table_name).insert(payload).execute()
+                    self.client.table(table_name).insert(write_payload).execute()
                 else:
-                    self.client.table(table_name).update(payload).eq("id", record_id).execute()
+                    self.client.table(table_name).update(write_payload).eq("id", record_id).execute()
                     verify_saved_payload(self.client, table_name, "id", record_id, payload)
             else:
                 match_value = raw.get(match_column)
@@ -308,10 +315,10 @@ class SupabaseStore:
                 )
                 matches = response.data or []
                 if matches:
-                    self.client.table(table_name).update(payload).eq(match_column, match_value).execute()
+                    self.client.table(table_name).update(write_payload).eq(match_column, match_value).execute()
                     verify_saved_payload(self.client, table_name, match_column, match_value, payload)
                 else:
-                    self.client.table(table_name).insert(payload).execute()
+                    self.client.table(table_name).insert(write_payload).execute()
             saved += 1
         clear_cached_reference_data()
         return saved
@@ -393,12 +400,17 @@ class SupabaseStore:
             clean["is_active"] = True
         if not clean.get("ic_number") or not clean.get("full_name") or not clean.get("role"):
             raise ValueError("IC number, user name, and role are required.")
-        if record_id:
+        record_id = normalize_supabase_id(record_id)
+        clean = with_updated_at(clean, APP_USERS_TABLE)
+        if not is_empty_value(record_id):
             self.client.table(APP_USERS_TABLE).update(clean).eq("id", record_id).execute()
         else:
             self.client.table(APP_USERS_TABLE).upsert(clean, on_conflict="ic_number").execute()
 
     def delete_app_users(self, record_ids: list[Any]) -> int:
+        if not record_ids:
+            return 0
+        record_ids = [record_id for record_id in (normalize_supabase_id(value) for value in record_ids) if not is_empty_value(record_id)]
         if not record_ids:
             return 0
         self.client.table(APP_USERS_TABLE).delete().in_("id", record_ids).execute()
@@ -639,8 +651,50 @@ def clean_payload(
             if include_empty:
                 clean[column] = None
             continue
+        if is_diagnostic_result_column(column):
+            value = normalize_whole_number(value, column)
         clean[column] = value
     return clean
+
+
+def is_diagnostic_result_column(column: str) -> bool:
+    return str(column).upper().strip().startswith("AMAT")
+
+
+def normalize_whole_number(value: Any, column: str) -> int:
+    number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(number):
+        raise ValueError(f"{column} must be a whole number.")
+    if not float(number).is_integer():
+        raise ValueError(f"{column} must be a whole number.")
+    return int(number)
+
+
+def with_updated_at(payload: dict[str, Any], table_name: str) -> dict[str, Any]:
+    timestamp_tables = {
+        STUDENTS_TABLE,
+        LECTURERS_TABLE,
+        PROGRAMS_TABLE,
+        RESULTS_TABLE,
+        APP_USERS_TABLE,
+    }
+    if table_name not in timestamp_tables:
+        return payload
+    stamped = payload.copy()
+    stamped["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return stamped
+
+
+def normalize_supabase_id(value: Any) -> Any:
+    if is_empty_value(value):
+        return None
+    try:
+        number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        if not pd.isna(number) and float(number).is_integer():
+            return int(number)
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip()
 
 
 def verify_saved_payload(

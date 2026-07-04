@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from io import BytesIO
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import plotly.express as px
@@ -85,6 +86,7 @@ SPM_CGPA_MAP = {
     "E": 1.33,
     "G": 0.0,
 }
+APP_TIMEZONE = ZoneInfo("Asia/Kuala_Lumpur")
 PSPM_CGPA_MAP = {
     "A": 4.0,
     "A-": 3.67,
@@ -297,6 +299,23 @@ def sidebar_navigation(
         "Lecturer": [page for page in all_pages if page not in ["ADMIN", "LECTURER PROGRESS"]],
     }
     page = st.sidebar.radio("Navigation", role_pages[user["role"]])
+    st.sidebar.markdown(
+        f"""
+        <div style="
+            margin: 0.65rem 0 0.35rem 0;
+            padding: 0.65rem 0.75rem;
+            border: 1px solid #dbe3f2;
+            border-radius: 8px;
+            background: #ffffff;
+            color: #111827;
+            font-size: 0.78rem;
+            line-height: 1.35;">
+            <div style="font-weight: 800;">Data updated on :</div>
+            <div style="color:#28277f; font-weight: 800;">{data_updated_label(store, base_records)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.sidebar.divider()
     st.sidebar.subheader("Global Filters")
@@ -330,6 +349,49 @@ def sidebar_navigation(
         st.session_state.clear()
         st.rerun()
     return page, filters
+
+
+def data_updated_label(store: SupabaseStore, base_records: pd.DataFrame) -> str:
+    frames = [base_records]
+    try:
+        refs = store.get_reference_data()
+        frames.extend(refs.values())
+    except Exception:
+        pass
+
+    latest = latest_timestamp_from_frames(frames)
+    app_update = st.session_state.get("app_data_updated_at")
+    if isinstance(app_update, datetime):
+        app_update = malaysia_datetime(app_update)
+        latest = app_update if latest is None or app_update > latest else latest
+    if latest is None:
+        loaded_at = st.session_state.setdefault("data_loaded_at", datetime.now(APP_TIMEZONE))
+        return loaded_at.strftime("%A, %d %B %Y, %I:%M %p")
+    return latest.strftime("%A, %d %B %Y, %I:%M %p")
+
+
+def latest_timestamp_from_frames(frames: list[pd.DataFrame]) -> datetime | None:
+    latest: pd.Timestamp | None = None
+    for frame in frames:
+        if frame is None or frame.empty:
+            continue
+        for column in ["updated_at", "created_at"]:
+            if column not in frame.columns:
+                continue
+            timestamps = pd.to_datetime(frame[column], errors="coerce", utc=True).dropna()
+            if timestamps.empty:
+                continue
+            candidate = timestamps.max()
+            latest = candidate if latest is None or candidate > latest else latest
+    if latest is None:
+        return None
+    return latest.tz_convert("Asia/Kuala_Lumpur").to_pydatetime()
+
+
+def malaysia_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=APP_TIMEZONE)
+    return value.astimezone(APP_TIMEZONE)
 
 
 def demography_dashboard(records: pd.DataFrame, user: dict) -> None:
@@ -1074,19 +1136,22 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
             submitted = st.form_submit_button("Save record", use_container_width=True)
             if submitted:
                 record_id = None if selected == "New record" else update_options[selected]
-                store.upsert_reference(dataset_key, payload, record_id)
-                action = "created" if selected == "New record" else "updated"
-                history_logged = store.log_edit_history(
-                    user,
-                    action.upper(),
-                    dataset_key,
-                    record_id=record_id,
-                    details=f"{action.title()} {dataset_label.lower()} record with fields: {', '.join(payload.keys())}",
-                )
-                set_data_management_success(f"Successfully {action} {dataset_label.lower()} record.")
-                if not history_logged:
-                    set_data_management_warning("The data was saved, but edit history was not recorded because the edit_history table is unavailable.")
-                st.rerun()
+                try:
+                    store.upsert_reference(dataset_key, payload, record_id)
+                    action = "created" if selected == "New record" else "updated"
+                    history_logged = store.log_edit_history(
+                        user,
+                        action.upper(),
+                        dataset_key,
+                        record_id=record_id,
+                        details=f"{action.title()} {dataset_label.lower()} record with fields: {', '.join(payload.keys())}",
+                    )
+                    set_data_management_success(f"Successfully {action} {dataset_label.lower()} record.")
+                    if not history_logged:
+                        set_data_management_warning("The data was saved, but edit history was not recorded because the edit_history table is unavailable.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Unable to save record: {exc}")
 
     with tab_import:
         st.subheader(f"Bulk Import and Update {dataset_label}")
@@ -1233,6 +1298,7 @@ def set_data_management_success(message: str) -> None:
     st.session_state["data_management_success"] = message
     st.session_state["data_management_success_persist"] = message
     st.session_state["supabase_data_dirty"] = True
+    st.session_state["app_data_updated_at"] = datetime.now(APP_TIMEZONE)
 
 
 def app_users_setup_sql() -> str:
@@ -1357,9 +1423,20 @@ def dataset_form_fields(columns: list[str], selected_row: pd.Series | None) -> d
         for ui_column, column in zip(ui_columns, row_columns):
             payload[column] = ui_column.text_input(
                 column,
-                value=field_value(selected_row, column),
+                value=form_field_value(selected_row, column),
+                placeholder="Whole number only" if is_diagnostic_assessment(column) else None,
             )
     return payload
+
+
+def form_field_value(row: pd.Series | None, column: str) -> str:
+    value = field_value(row, column)
+    if not value or not is_diagnostic_assessment(column):
+        return value
+    number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(number):
+        return value
+    return str(int(number)) if float(number).is_integer() else str(number)
 
 
 def safe_key(value: str) -> str:

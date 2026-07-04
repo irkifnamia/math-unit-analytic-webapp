@@ -1113,6 +1113,11 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
                         incoming = pd.read_csv(uploaded)
                     else:
                         incoming = pd.read_excel(uploaded)
+                except Exception as exc:
+                    st.error(f"Unable to read uploaded file: {exc}")
+                    incoming = None
+
+                if incoming is not None:
                     preview, errors = validate_selected_import_frame(
                         incoming,
                         dataset_key,
@@ -1125,32 +1130,39 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
                     if errors:
                         st.error("Please fix the validation errors before saving.")
                         st.write(errors)
-                    elif st.button("Save imported data", type="primary"):
-                        saved = store.bulk_upsert_reference(dataset_key, preview, match_column=match_column)
-                        history_logged = store.log_edit_history(
-                            user,
-                            "BULK IMPORT",
-                            dataset_key,
-                            details=(
-                                f"Saved {saved} {dataset_label.lower()} record(s). "
-                                f"Match column: {match_column}. Updated columns: {', '.join(selected_update_columns)}."
-                            ),
-                        )
-                        success_message = (
-                            f"Bulk import successful. {saved} {dataset_label.lower()} record(s) saved. "
-                            f"Matching rows were overwritten by {match_column}; blank imported cells cleared existing values."
-                        )
-                        set_data_management_success(success_message)
-                        st.success(success_message)
+                    elif st.button("Save imported data", type="primary", key=f"save_import_{dataset_key}"):
+                        if preview.empty:
+                            st.error("No rows found in the uploaded file.")
+                            return
                         try:
-                            st.toast(success_message)
-                        except Exception:
-                            pass
-                        if not history_logged:
-                            set_data_management_warning("The import was saved, but edit history was not recorded because the edit_history table is unavailable.")
-                        st.rerun()
-                except Exception as exc:
-                    st.error(f"Unable to read uploaded file: {exc}")
+                            saved = store.bulk_upsert_reference(dataset_key, preview, match_column=match_column)
+                            if saved <= 0:
+                                st.error("No rows were saved. Check that the uploaded file contains valid matching rows.")
+                                return
+                            history_logged = store.log_edit_history(
+                                user,
+                                "BULK IMPORT",
+                                dataset_key,
+                                details=(
+                                    f"Saved {saved} {dataset_label.lower()} record(s). "
+                                    f"Match column: {match_column}. Updated columns: {', '.join(selected_update_columns)}."
+                                ),
+                            )
+                            success_message = (
+                                f"Bulk import successful. {saved} {dataset_label.lower()} record(s) saved. "
+                                f"Matching rows were overwritten by {match_column}; blank imported cells cleared existing values."
+                            )
+                            set_data_management_success(success_message)
+                            st.success(success_message)
+                            try:
+                                st.toast(success_message)
+                            except Exception:
+                                pass
+                            if not history_logged:
+                                set_data_management_warning("The import was saved, but edit history was not recorded because the edit_history table is unavailable.")
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"Bulk import failed: {exc}")
 
     with tab_refs:
         st.subheader(f"{dataset_label} Reference Data")

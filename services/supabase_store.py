@@ -273,24 +273,39 @@ class SupabaseStore:
             payload = clean_payload(raw, allowed_columns, include_empty=True)
             if not payload:
                 continue
-            record_id = raw.get("id") if match_column == "id" else None
-            if is_empty_value(record_id) and match_column != "id":
+
+            if match_column == "id":
+                record_id = raw.get("id")
+                if is_empty_value(record_id):
+                    self.client.table(table_name).insert(payload).execute()
+                else:
+                    response = self.client.table(table_name).update(payload).eq("id", record_id).execute()
+                    if response.data == []:
+                        raise RuntimeError(f"No {table_name} row was updated for id {record_id}.")
+            else:
                 match_value = raw.get(match_column)
-                if not is_empty_value(match_value):
-                    response = (
+                if is_empty_value(match_value):
+                    continue
+                response = (
+                    self.client.table(table_name)
+                    .select("id")
+                    .eq(match_column, match_value)
+                    .execute()
+                )
+                matches = response.data or []
+                if matches:
+                    update_response = (
                         self.client.table(table_name)
-                        .select("id")
+                        .update(payload)
                         .eq(match_column, match_value)
-                        .limit(1)
                         .execute()
                     )
-                    matches = response.data or []
-                    if matches:
-                        record_id = matches[0].get("id")
-            if is_empty_value(record_id):
-                self.client.table(table_name).insert(payload).execute()
-            else:
-                self.client.table(table_name).update(payload).eq("id", record_id).execute()
+                    if update_response.data == []:
+                        raise RuntimeError(
+                            f"No {table_name} rows were updated for {match_column} {match_value}."
+                        )
+                else:
+                    self.client.table(table_name).insert(payload).execute()
             saved += 1
         clear_cached_reference_data()
         return saved

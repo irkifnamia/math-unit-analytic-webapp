@@ -5,6 +5,7 @@ from io import BytesIO
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from components.ui import afj_sidebar_brand, app_brand, blank_state, inject_theme, page_header
@@ -1981,33 +1982,90 @@ def render_progress_grade_heatmap(
         var_name="Grade",
         value_name="Students",
     )
+    group_order = matrix.index.tolist()
+    grade_positions = {grade: index for index, grade in enumerate(grade_order)}
+    group_positions = {group: index for index, group in enumerate(group_order)}
+    heatmap_points["Grade Position"] = heatmap_points["Grade"].map(grade_positions)
+    heatmap_points["Row Position"] = heatmap_points[group_column].map(group_positions)
     heatmap_points["Label"] = heatmap_points["Students"].map(lambda value: f"{int(value):,}" if value else "")
-    fig = px.scatter(
-        heatmap_points,
-        x="Grade",
-        y=group_column,
-        color="Students",
-        size=[1] * len(heatmap_points),
-        text="Label",
-        color_continuous_scale="YlGnBu",
-        category_orders={"Grade": grade_order, group_column: matrix.index.tolist()},
-        title=f"{test_name} Grade Distribution Heatmap ({system_label})",
-        custom_data=[group_column, "Grade", "Students"],
+    max_students = float(heatmap_points["Students"].max() or 0)
+    heatmap_points["Text Color Group"] = heatmap_points["Students"].apply(
+        lambda value: "Light text" if max_students and value >= max_students * 0.55 else "Dark text"
     )
-    fig.update_traces(
-        marker=dict(symbol="square", size=28, sizemode="diameter", line=dict(width=0.5, color="#ffffff")),
-        textposition="middle center",
-        hovertemplate=f"{group_column}: %{{customdata[0]}}<br>Grade: %{{customdata[1]}}<br>Students: %{{customdata[2]:,}}<extra></extra>",
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=[-0.72] * len(group_order),
+            y=list(range(len(group_order))),
+            mode="text",
+            text=group_order,
+            textposition="middle right",
+            textfont=dict(color="#111827", size=11),
+            hoverinfo="skip",
+            showlegend=False,
+        )
     )
+    for text_group, text_color in [("Dark text", "#000000"), ("Light text", "#ffffff")]:
+        layer = heatmap_points[heatmap_points["Text Color Group"] == text_group]
+        if layer.empty:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=layer["Grade Position"],
+                y=layer["Row Position"],
+                mode="markers+text",
+                text=layer["Label"],
+                textposition="middle center",
+                textfont=dict(color=text_color, size=12),
+                customdata=layer[[group_column, "Grade", "Students"]].to_numpy(),
+                marker=dict(
+                    symbol="square",
+                    size=28,
+                    color=layer["Students"],
+                    coloraxis="coloraxis",
+                    line=dict(width=0.5, color="#ffffff"),
+                ),
+                hovertemplate=f"{group_column}: %{{customdata[0]}}<br>Grade: %{{customdata[1]}}<br>Students: %{{customdata[2]:,}}<extra></extra>",
+                showlegend=False,
+            )
+        )
     fig.update_layout(
-        height=min(760, max(360, 28 * len(matrix) + 130)),
+        title=f"{test_name} Grade Distribution Heatmap ({system_label})",
+        height=min(860, max(380, 30 * len(matrix) + 150)),
         xaxis_title="Grade",
-        yaxis_title=group_column,
+        yaxis_title="",
+        coloraxis=dict(colorscale="YlGnBu", colorbar=dict(title="Students")),
         showlegend=False,
         clickmode="event+select",
-        margin=dict(l=20, r=20, t=55, b=20),
+        margin=dict(l=20, r=20, t=55, b=35),
+        plot_bgcolor="rgba(0,0,0,0)",
     )
-    fig.update_yaxes(categoryorder="array", categoryarray=list(reversed(matrix.index.tolist())))
+    fig.update_xaxes(
+        range=[-1.25, len(grade_order) - 0.45],
+        tickmode="array",
+        tickvals=list(range(len(grade_order))),
+        ticktext=grade_order,
+        gridcolor="#e7ebf3",
+        zeroline=False,
+    )
+    fig.update_yaxes(
+        range=[len(group_order) - 0.5, -0.5],
+        tickmode="array",
+        tickvals=list(range(len(group_order))),
+        ticktext=[""] * len(group_order),
+        showticklabels=False,
+        gridcolor="#e7ebf3",
+        zeroline=False,
+    )
+    fig.add_annotation(
+        x=-0.72,
+        y=-0.75,
+        text=group_column,
+        showarrow=False,
+        font=dict(color="#4b5563", size=11),
+        xanchor="right",
+        yanchor="bottom",
+    )
     chart_key = f"{group_column}_{test_name}_{system_label}_grade_heatmap"
     try:
         event = st.plotly_chart(
@@ -2032,9 +2090,15 @@ def render_progress_grade_heatmap(
         selected_group = str(custom_data[0]).strip()
         selected_grade = str(custom_data[1]).strip()
     if not selected_group:
-        selected_group = str(point.get("y", "")).strip()
+        try:
+            selected_group = str(group_order[int(round(float(point.get("y"))))]).strip()
+        except (TypeError, ValueError, IndexError):
+            selected_group = str(point.get("y", "")).strip()
     if not selected_grade:
-        selected_grade = str(point.get("x", "")).strip()
+        try:
+            selected_grade = str(grade_order[int(round(float(point.get("x"))))]).strip()
+        except (TypeError, ValueError, IndexError):
+            selected_grade = str(point.get("x", "")).strip()
     if not selected_group or not selected_grade:
         return
     selected_frame = frame[

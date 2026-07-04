@@ -1150,6 +1150,11 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
                         set_data_management_success(
                             f"Bulk import successful. {saved} {dataset_label.lower()} record(s) saved."
                         )
+                        st.success(f"Bulk import successful. {saved} {dataset_label.lower()} record(s) saved.")
+                        try:
+                            st.toast(f"Bulk import successful. {saved} {dataset_label.lower()} record(s) saved.")
+                        except Exception:
+                            pass
                         if not history_logged:
                             set_data_management_warning("The import was saved, but edit history was not recorded because the edit_history table is unavailable.")
                         st.rerun()
@@ -1206,6 +1211,7 @@ def search_dataset(df: pd.DataFrame, query: str, dataset_key: str) -> pd.DataFra
 
 def set_data_management_success(message: str) -> None:
     st.session_state["data_management_success"] = message
+    st.session_state["data_management_success_persist"] = message
     st.session_state["supabase_data_dirty"] = True
 
 
@@ -1230,11 +1236,12 @@ on public.app_users (role);"""
 
 def set_data_management_warning(message: str) -> None:
     st.session_state["data_management_warning"] = message
+    st.session_state["data_management_warning_persist"] = message
 
 
 def render_data_management_success() -> None:
-    message = st.session_state.pop("data_management_success", None)
-    warning = st.session_state.pop("data_management_warning", None)
+    message = st.session_state.pop("data_management_success", None) or st.session_state.pop("data_management_success_persist", None)
+    warning = st.session_state.pop("data_management_warning", None) or st.session_state.pop("data_management_warning_persist", None)
     if message:
         st.success(message)
         try:

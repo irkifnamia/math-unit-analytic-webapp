@@ -715,7 +715,34 @@ def program_progress_page(records: pd.DataFrame, user: dict, filters: dict[str, 
         "Rank program progress by diagnostic, SPM, and PSPM performance across SES, SDS, and overall.",
         user["role"],
     )
+    records = strip_jurusan_from_program(records)
     progress_rank_page(records, filters, "PROGRAM", "Program")
+
+
+def comparable_program_label(value: object) -> str:
+    return " ".join(str(value).replace("–", "-").replace("—", "-").split()).casefold()
+
+
+def strip_jurusan_from_program(records: pd.DataFrame) -> pd.DataFrame:
+    if records.empty or "PROGRAM" not in records:
+        return records
+    cleaned = records.copy()
+    jurusan_values = {
+        comparable_program_label(value)
+        for value in cleaned.get("JURUSAN", pd.Series(dtype=str)).dropna().unique().tolist()
+        if comparable_program_label(value)
+    }
+    def invalid_program(value: object) -> bool:
+        normalized = comparable_program_label(value)
+        return (
+            not normalized
+            or normalized in jurusan_values
+            or "modul" in normalized
+            or normalized in {"perakaunan", "sains komputer"}
+        )
+
+    cleaned.loc[cleaned["PROGRAM"].apply(invalid_program).fillna(True), "PROGRAM"] = pd.NA
+    return cleaned
 
 
 def progress_rank_page(records: pd.DataFrame, filters: dict[str, list[str]], group_column: str, group_label: str) -> None:
@@ -1983,7 +2010,7 @@ def render_progress_grade_heatmap(
         value_name="Students",
     )
     group_order = matrix.index.tolist()
-    grade_positions = {grade: index for index, grade in enumerate(grade_order)}
+    grade_positions = {grade: index + 1 for index, grade in enumerate(grade_order)}
     group_positions = {group: index for index, group in enumerate(group_order)}
     heatmap_points["Grade Position"] = heatmap_points["Grade"].map(grade_positions)
     heatmap_points["Row Position"] = heatmap_points[group_column].map(group_positions)
@@ -1994,13 +2021,36 @@ def render_progress_grade_heatmap(
     )
     fig = go.Figure()
     fig.add_trace(
+        go.Heatmap(
+            z=matrix.to_numpy(),
+            x=[grade_positions[grade] for grade in grade_order],
+            y=list(range(len(group_order))),
+            colorscale="YlGnBu",
+            colorbar=dict(title="Students"),
+            xgap=1,
+            ygap=1,
+            hoverinfo="skip",
+        )
+    )
+    for row_position in range(len(group_order)):
+        fig.add_shape(
+            type="rect",
+            x0=-0.5,
+            x1=0.5,
+            y0=row_position - 0.5,
+            y1=row_position + 0.5,
+            fillcolor="#f8fafc",
+            line=dict(color="#e7ebf3", width=1),
+            layer="below",
+        )
+    fig.add_trace(
         go.Scatter(
-            x=[-0.72] * len(group_order),
+            x=[0] * len(group_order),
             y=list(range(len(group_order))),
             mode="text",
             text=group_order,
-            textposition="middle right",
-            textfont=dict(color="#111827", size=11),
+            textposition="middle center",
+            textfont=dict(color="#000000", size=11),
             hoverinfo="skip",
             showlegend=False,
         )
@@ -2013,38 +2063,41 @@ def render_progress_grade_heatmap(
             go.Scatter(
                 x=layer["Grade Position"],
                 y=layer["Row Position"],
-                mode="markers+text",
+                mode="text",
                 text=layer["Label"],
                 textposition="middle center",
                 textfont=dict(color=text_color, size=12),
                 customdata=layer[[group_column, "Grade", "Students"]].to_numpy(),
-                marker=dict(
-                    symbol="square",
-                    size=28,
-                    color=layer["Students"],
-                    coloraxis="coloraxis",
-                    line=dict(width=0.5, color="#ffffff"),
-                ),
                 hovertemplate=f"{group_column}: %{{customdata[0]}}<br>Grade: %{{customdata[1]}}<br>Students: %{{customdata[2]:,}}<extra></extra>",
                 showlegend=False,
             )
         )
+    fig.add_trace(
+        go.Scatter(
+            x=heatmap_points["Grade Position"],
+            y=heatmap_points["Row Position"],
+            mode="markers",
+            customdata=heatmap_points[[group_column, "Grade", "Students"]].to_numpy(),
+            marker=dict(symbol="square", size=30, color="rgba(0,0,0,0.01)", line=dict(width=0)),
+            hovertemplate=f"{group_column}: %{{customdata[0]}}<br>Grade: %{{customdata[1]}}<br>Students: %{{customdata[2]:,}}<extra></extra>",
+            showlegend=False,
+        )
+    )
     fig.update_layout(
         title=f"{test_name} Grade Distribution Heatmap ({system_label})",
         height=min(860, max(380, 30 * len(matrix) + 150)),
         xaxis_title="Grade",
         yaxis_title="",
-        coloraxis=dict(colorscale="YlGnBu", colorbar=dict(title="Students")),
         showlegend=False,
         clickmode="event+select",
         margin=dict(l=20, r=20, t=55, b=35),
-        plot_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="#ffffff",
     )
     fig.update_xaxes(
-        range=[-1.25, len(grade_order) - 0.45],
+        range=[-0.5, len(grade_order) + 0.5],
         tickmode="array",
-        tickvals=list(range(len(grade_order))),
-        ticktext=grade_order,
+        tickvals=[0, *[grade_positions[grade] for grade in grade_order]],
+        ticktext=[group_column, *grade_order],
         gridcolor="#e7ebf3",
         zeroline=False,
     )
@@ -2056,15 +2109,6 @@ def render_progress_grade_heatmap(
         showticklabels=False,
         gridcolor="#e7ebf3",
         zeroline=False,
-    )
-    fig.add_annotation(
-        x=-0.72,
-        y=-0.75,
-        text=group_column,
-        showarrow=False,
-        font=dict(color="#4b5563", size=11),
-        xanchor="right",
-        yanchor="bottom",
     )
     chart_key = f"{group_column}_{test_name}_{system_label}_grade_heatmap"
     try:
@@ -2096,7 +2140,7 @@ def render_progress_grade_heatmap(
             selected_group = str(point.get("y", "")).strip()
     if not selected_grade:
         try:
-            selected_grade = str(grade_order[int(round(float(point.get("x"))))]).strip()
+            selected_grade = str(grade_order[int(round(float(point.get("x")))) - 1]).strip()
         except (TypeError, ValueError, IndexError):
             selected_grade = str(point.get("x", "")).strip()
     if not selected_group or not selected_grade:

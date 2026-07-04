@@ -205,12 +205,22 @@ class SupabaseStore:
                 for name in split_multi_value(value)
             }
         )
+        jurusan_values = {
+            comparable_label(value)
+            for value in records.get("JURUSAN", pd.Series(dtype=str)).dropna().unique().tolist()
+            if comparable_label(value)
+        }
+        program_options = sorted(
+            value
+            for value in records.get("PROGRAM", pd.Series(dtype=str)).dropna().unique().tolist()
+            if not is_jurusan_program_value(value, jurusan_values)
+        )
         return {
             "Pensyarah": pensyarah_options,
             "Kelas": sorted(records.get("KELAS", pd.Series(dtype=str)).dropna().unique().tolist()),
             "Subjek": sorted(records.get("SUBJEK", pd.Series(dtype=str)).dropna().unique().tolist()),
             "Sistem": sorted(records.get("SISTEM", pd.Series(dtype=str)).dropna().unique().tolist()),
-            "Program": sorted(records.get("PROGRAM", pd.Series(dtype=str)).dropna().unique().tolist()),
+            "Program": program_options,
             "Jurusan": sorted(records.get("JURUSAN", pd.Series(dtype=str)).dropna().unique().tolist()),
         }
 
@@ -476,6 +486,21 @@ def select_table_frame(
         return pd.DataFrame(columns=columns)
 
 
+def comparable_label(value: Any) -> str:
+    return " ".join(str(value).replace("–", "-").replace("—", "-").split()).casefold()
+
+
+def is_jurusan_program_value(value: Any, jurusan_values: set[str]) -> bool:
+    normalized = comparable_label(value)
+    if not normalized:
+        return False
+    return (
+        normalized in jurusan_values
+        or "modul" in normalized
+        or normalized in {"perakaunan", "sains komputer"}
+    )
+
+
 def attach_program(students: pd.DataFrame, programs: pd.DataFrame) -> pd.DataFrame:
     if programs.empty:
         students["PROGRAM"] = None
@@ -483,6 +508,15 @@ def attach_program(students: pd.DataFrame, programs: pd.DataFrame) -> pd.DataFra
     program_lookup = first_non_empty_by_key(programs, "NO MATRIK", "PROGRAM")
     students["PROGRAM"] = students["NO MATRIK"].map(program_lookup)
     students["PROGRAM"] = students["PROGRAM"].replace("", pd.NA)
+    if "JURUSAN" in students:
+        jurusan_values = {
+            comparable_label(value)
+            for value in students["JURUSAN"].dropna().unique().tolist()
+            if comparable_label(value)
+        }
+        if jurusan_values:
+            mixed_jurusan = students["PROGRAM"].apply(lambda value: is_jurusan_program_value(value, jurusan_values))
+            students.loc[mixed_jurusan.fillna(False), "PROGRAM"] = pd.NA
     return students
 
 

@@ -692,6 +692,7 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
         st.error("You do not have permission to access DATA MANAGEMENT.")
         return
 
+    render_data_management_success()
     refs = store.get_reference_data()
     dataset_label = st.selectbox("Dataset", list(DATASET_OPTIONS.keys()), key="dm_dataset")
     dataset_key = DATASET_OPTIONS[dataset_label]
@@ -716,7 +717,7 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
         selected_ids = [delete_options[label] for label in selected_labels]
         if st.button("Delete selected records", type="secondary", disabled=not selected_ids):
             deleted = store.delete_reference(dataset_key, selected_ids)
-            st.success(f"Deleted {deleted} record(s).")
+            set_data_management_success(f"Successfully deleted {deleted} {dataset_label.lower()} record(s).")
             st.rerun()
 
     with tab_form:
@@ -740,7 +741,8 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
             submitted = st.form_submit_button("Save record", use_container_width=True)
             if submitted:
                 store.upsert_reference(dataset_key, payload, None if selected == "New record" else update_options[selected])
-                st.success("Record saved successfully.")
+                action = "created" if selected == "New record" else "updated"
+                set_data_management_success(f"Successfully {action} {dataset_label.lower()} record.")
                 st.rerun()
 
     with tab_import:
@@ -797,7 +799,9 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
                         st.write(errors)
                     elif st.button("Save imported data", type="primary"):
                         saved = store.bulk_upsert_reference(dataset_key, preview)
-                        st.success(f"Import complete. {saved} {dataset_label.lower()} record(s) saved.")
+                        set_data_management_success(
+                            f"Bulk import successful. {saved} {dataset_label.lower()} record(s) saved."
+                        )
                         st.rerun()
                 except Exception as exc:
                     st.error(f"Unable to read uploaded file: {exc}")
@@ -848,6 +852,21 @@ def search_dataset(df: pd.DataFrame, query: str, dataset_key: str) -> pd.DataFra
     for column in columns:
         mask = mask | df[column].fillna("").astype(str).str.lower().str.contains(search_text, regex=False)
     return df[mask]
+
+
+def set_data_management_success(message: str) -> None:
+    st.session_state["data_management_success"] = message
+
+
+def render_data_management_success() -> None:
+    message = st.session_state.pop("data_management_success", None)
+    if not message:
+        return
+    st.success(message, icon="✅")
+    try:
+        st.toast(message, icon="✅")
+    except Exception:
+        pass
 
 
 def selected_upload_template(

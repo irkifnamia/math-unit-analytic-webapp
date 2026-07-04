@@ -9,10 +9,8 @@ import streamlit as st
 
 from components.ui import afj_sidebar_brand, app_brand, blank_state, inject_theme, page_header
 from services.supabase_store import (
-    create_upload_template,
     natural_key_column,
     SupabaseStore,
-    validate_import_frame,
 )
 
 
@@ -770,7 +768,7 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
         if not selected_update_columns:
             st.info("Choose at least one column to update before downloading a template or uploading data.")
         else:
-            template = create_upload_template(dataset_key, selected_update_columns, match_column)
+            template = selected_upload_template(writable_columns, selected_update_columns, match_column)
             template_csv = template.to_csv(index=False).encode("utf-8")
             st.download_button(
                 "Download CSV template",
@@ -785,10 +783,10 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
                         incoming = pd.read_csv(uploaded)
                     else:
                         incoming = pd.read_excel(uploaded)
-                    preview, errors = validate_import_frame(
+                    preview, errors = validate_selected_import_frame(
                         incoming,
-                        refs,
                         dataset_key,
+                        writable_columns,
                         selected_update_columns,
                         match_column,
                     )
@@ -850,6 +848,54 @@ def search_dataset(df: pd.DataFrame, query: str, dataset_key: str) -> pd.DataFra
     for column in columns:
         mask = mask | df[column].fillna("").astype(str).str.lower().str.contains(search_text, regex=False)
     return df[mask]
+
+
+def selected_upload_template(
+    writable_columns: list[str],
+    update_columns: list[str],
+    match_column: str,
+) -> pd.DataFrame:
+    columns = ["id"] if match_column == "id" else [match_column]
+    for column in update_columns:
+        if column in writable_columns and column not in columns:
+            columns.append(column)
+    return pd.DataFrame(columns=columns)
+
+
+def validate_selected_import_frame(
+    raw: pd.DataFrame,
+    dataset_key: str,
+    writable_columns: list[str],
+    update_columns: list[str],
+    match_column: str,
+) -> tuple[pd.DataFrame, list[str]]:
+    template_columns = selected_upload_template(writable_columns, update_columns, match_column).columns.tolist()
+    df = raw.copy()
+    missing = [column for column in template_columns if column not in df.columns]
+    errors = [f"Missing column: {column}" for column in missing]
+    if errors:
+        return df, errors
+
+    df = df[template_columns].copy()
+    for column in df.columns:
+        df[column] = df[column].fillna("").astype(str).str.strip()
+
+    allowed_update_columns = [
+        column
+        for column in update_columns
+        if column in writable_columns and column in df.columns and column != match_column
+    ]
+    if not allowed_update_columns:
+        errors.append("Choose at least one valid column to update.")
+
+    for row_number, row in df.iterrows():
+        if row.get(match_column, "") == "":
+            errors.append(f"Row {row_number + 2}: {match_column} is required")
+        update_values = [row.get(column, "") for column in allowed_update_columns]
+        if not any(value != "" for value in update_values):
+            errors.append(f"Row {row_number + 2}: at least one selected update column is required")
+
+    return df, errors
 
 
 def search_any_columns(df: pd.DataFrame, query: str, columns: list[str]) -> pd.DataFrame:

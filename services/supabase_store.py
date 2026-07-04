@@ -152,7 +152,8 @@ class SupabaseStore:
         if results_mode == "spm":
             records = attach_results(records, self.get_spm_results_data(), SPM_RESULTS_COLUMNS)
         elif results_mode == "all":
-            records = attach_results(records, self.get_results_data(), RESULTS_COLUMNS)
+            all_results = self.get_results_data()
+            records = attach_results(records, all_results, all_results.columns.tolist() or RESULTS_COLUMNS)
 
         return records.sort_values(["NAMA PELAJAR"], ascending=[True], na_position="last")
 
@@ -228,7 +229,7 @@ class SupabaseStore:
         self.upsert_reference("students", payload, record_id)
 
     def upsert_reference(self, key: str, payload: dict[str, Any], record_id: Any | None = None) -> None:
-        table_name, allowed_columns = reference_table_and_columns(key)
+        table_name, allowed_columns = self.reference_table_and_columns(key)
         clean = clean_payload(payload, allowed_columns, include_empty=bool(record_id))
         if not clean:
             raise ValueError("No allowed Supabase columns were provided.")
@@ -250,7 +251,7 @@ class SupabaseStore:
         return len(record_ids)
 
     def add_reference(self, key: str, payload: dict[str, Any]) -> None:
-        table_name, allowed_columns = reference_table_and_columns(key)
+        table_name, allowed_columns = self.reference_table_and_columns(key)
         clean = clean_payload(payload, allowed_columns)
         if not clean:
             raise ValueError("No allowed Supabase columns were provided.")
@@ -258,14 +259,28 @@ class SupabaseStore:
         clear_cached_reference_data()
 
     def writable_columns(self, key: str) -> list[str]:
-        return reference_table_and_columns(key)[1]
+        return self.reference_table_and_columns(key)[1]
+
+    def reference_table_and_columns(self, key: str) -> tuple[str, list[str]]:
+        if key == "results":
+            results = self.get_results_data()
+            if not results.empty:
+                columns = [
+                    column
+                    for column in results.columns.tolist()
+                    if column not in ["id", "created_at", "updated_at"]
+                ]
+                if "NO MATRIK" in columns:
+                    columns = ["NO MATRIK", *[column for column in columns if column != "NO MATRIK"]]
+                return RESULTS_TABLE, columns
+        return reference_table_and_columns(key)
 
     def bulk_upsert_records(self, df: pd.DataFrame) -> tuple[int, int]:
         saved = self.bulk_upsert_reference("students", df)
         return saved, 0
 
     def bulk_upsert_reference(self, key: str, df: pd.DataFrame, match_column: str | None = None) -> int:
-        table_name, allowed_columns = reference_table_and_columns(key)
+        table_name, allowed_columns = self.reference_table_and_columns(key)
         match_column = match_column or natural_key_column(key)
         saved = 0
         for _, row in df.iterrows():
@@ -453,7 +468,7 @@ def get_cached_spm_results_data() -> tuple[pd.DataFrame, list[str]]:
 @st.cache_data(ttl=600, show_spinner=False)
 def get_cached_results_data() -> tuple[pd.DataFrame, list[str]]:
     errors: list[str] = []
-    results = select_table_frame(get_client(), RESULTS_TABLE, RESULTS_COLUMNS, errors)
+    results = select_all_table_frame(get_client(), RESULTS_TABLE, errors, fallback_columns=RESULTS_COLUMNS)
     return results, errors
 
 
@@ -498,6 +513,31 @@ def select_table_frame(
     except Exception as exc:
         errors.append(f"{table_name}: {exc}")
         return pd.DataFrame(columns=columns)
+
+
+def select_all_table_frame(
+    client: Client,
+    table_name: str,
+    errors: list[str],
+    fallback_columns: list[str] | None = None,
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    page_size = 1000
+    start = 0
+    try:
+        while True:
+            response = client.table(table_name).select("*").range(start, start + page_size - 1).execute()
+            page = response.data or []
+            rows.extend(page)
+            if len(page) < page_size:
+                break
+            start += page_size
+        if rows:
+            return pd.DataFrame(rows)
+        return pd.DataFrame(columns=fallback_columns or [])
+    except Exception as exc:
+        errors.append(f"{table_name}: {exc}")
+        return pd.DataFrame(columns=fallback_columns or [])
 
 
 def comparable_label(value: Any) -> str:

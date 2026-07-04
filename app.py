@@ -47,6 +47,20 @@ GRADE_TEST_COLUMNS = ["PSPM_DM015", "PSPM_DM025", "PSPM_SEM1", "PSPM_SEM2"]
 PERFORMANCE_COLUMNS = [*GRADE_TEST_COLUMNS, *DIAGNOSTIC_COLUMNS]
 SPM_TEST_COLUMNS = ["SPM_MATH", "SPM_ADDMATH"]
 UJIAN_OPTIONS = [*SPM_TEST_COLUMNS, *GRADE_TEST_COLUMNS, *DIAGNOSTIC_COLUMNS]
+ASSESSMENT_IDENTITY_COLUMNS = {
+    "id",
+    "created_at",
+    "updated_at",
+    "NO MATRIK",
+    "NAMA PELAJAR",
+    "KELAS",
+    "PENSYARAH",
+    "JURUSAN",
+    "PROGRAM",
+    "SISTEM",
+    "SUBJEK",
+}
+PROGRESS_SYSTEM_TABS = ["OVERALL", "SDS", "SES 1/2", "SES 3/4"]
 DATASET_OPTIONS = {
     "Students": "students",
     "Lecturers": "lecturers",
@@ -294,9 +308,10 @@ def sidebar_navigation(
             st.session_state[f"global_filter_{label}"] = []
         st.rerun()
     options = store.filter_options_from_records(base_records, user)
+    ujian_options = available_ujian_options(store)
     filters: dict[str, list[str]] = {}
     for label in ["Pensyarah", "Kelas", "Subjek", "Sistem", "Program", "Jurusan", "Ujian"]:
-        values = UJIAN_OPTIONS if label == "Ujian" else options.get(label, [])
+        values = ujian_options if label == "Ujian" else options.get(label, [])
         key = f"global_filter_{label}"
         selected_values = st.session_state.get(key, [])
         st.session_state[key] = [value for value in selected_values if value in values]
@@ -409,7 +424,7 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
         blank_state("No records match the selected filters. Use Clear filters or Refresh Supabase data in the sidebar.")
         return
 
-    selected_spm_columns = selected_ujian_columns(filters, SPM_TEST_COLUMNS)
+    selected_spm_columns = selected_ujian_columns(filters, spm_columns_from_records(records))
     if not selected_spm_columns:
         blank_state("The selected Ujian filter does not include SPM_MATH or SPM_ADDMATH.")
         return
@@ -518,7 +533,7 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
         "Analyse PSPM DM015, DM025, Semester 1, and Semester 2 grade movement.",
         user["role"],
     )
-    pspm_columns = selected_ujian_columns(filters, GRADE_TEST_COLUMNS)
+    pspm_columns = selected_ujian_columns(filters, pspm_columns_from_records(records))
     if not pspm_columns:
         blank_state("The selected Ujian filter does not include PSPM assessments.")
         return
@@ -589,7 +604,7 @@ def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, l
         "Track AMAT diagnostic progress across cohorts, classes, and lecturers.",
         user["role"],
     )
-    diagnostic_columns = selected_ujian_columns(filters, DIAGNOSTIC_COLUMNS)
+    diagnostic_columns = selected_ujian_columns(filters, diagnostic_columns_from_records(records))
     if not diagnostic_columns:
         blank_state("The selected Ujian filter does not include any AMAT diagnostic tests.")
         return
@@ -691,7 +706,7 @@ def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, l
 def lecturer_progress_page(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
     page_header(
         "LECTURER PROGRESS",
-        "Rank lecturer progress by diagnostic, SPM, and PSPM performance across SES, SDS, and overall.",
+        "Rank lecturer progress by diagnostic, SPM, and PSPM performance across OVERALL, SDS, SES 1/2, and SES 3/4.",
         user["role"],
     )
     progress_rank_page(records, filters, "PENSYARAH", "Lecturer")
@@ -700,7 +715,7 @@ def lecturer_progress_page(records: pd.DataFrame, user: dict, filters: dict[str,
 def class_progress_page(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
     page_header(
         "CLASS PROGRESS",
-        "Rank class progress by diagnostic, SPM, and PSPM performance across SES, SDS, and overall.",
+        "Rank class progress by diagnostic, SPM, and PSPM performance across OVERALL, SDS, SES 1/2, and SES 3/4.",
         user["role"],
     )
     progress_rank_page(records, filters, "KELAS", "Class")
@@ -709,7 +724,7 @@ def class_progress_page(records: pd.DataFrame, user: dict, filters: dict[str, li
 def program_progress_page(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
     page_header(
         "PROGRAM PROGRESS",
-        "Rank program progress by diagnostic, SPM, and PSPM performance across SES, SDS, and overall.",
+        "Rank program progress by diagnostic, SPM, and PSPM performance across OVERALL, SDS, SES 1/2, and SES 3/4.",
         user["role"],
     )
     records = strip_jurusan_from_program(records)
@@ -743,9 +758,9 @@ def strip_jurusan_from_program(records: pd.DataFrame) -> pd.DataFrame:
 
 
 def progress_rank_page(records: pd.DataFrame, filters: dict[str, list[str]], group_column: str, group_label: str) -> None:
-    diagnostic_columns = selected_ujian_columns(filters, DIAGNOSTIC_COLUMNS)
-    spm_columns = selected_ujian_columns(filters, SPM_TEST_COLUMNS)
-    pspm_columns = selected_ujian_columns(filters, GRADE_TEST_COLUMNS)
+    diagnostic_columns = selected_ujian_columns(filters, diagnostic_columns_from_records(records))
+    spm_columns = selected_ujian_columns(filters, spm_columns_from_records(records))
+    pspm_columns = selected_ujian_columns(filters, pspm_columns_from_records(records))
     if not [*diagnostic_columns, *spm_columns, *pspm_columns]:
         blank_state("The selected Ujian filter does not include diagnostic, SPM, or PSPM assessments.")
         return
@@ -1176,13 +1191,14 @@ def dataset_frame(dataset_key: str, refs: dict[str, pd.DataFrame]) -> pd.DataFra
     if dataset_key == "results" and "students" in refs and not df.empty:
         students = refs["students"][["NO MATRIK", "NAMA PELAJAR"]].drop_duplicates("NO MATRIK")
         df = df.merge(students, on="NO MATRIK", how="left")
+        result_columns = assessment_columns_from_records(df)
         ordered = [
             "id",
             "created_at",
             "updated_at",
             "NO MATRIK",
             "NAMA PELAJAR",
-            *[column for column in RESULT_COLUMNS if column not in ["id", "created_at", "updated_at", "NO MATRIK"]],
+            *result_columns,
         ]
         return df[[column for column in ordered if column in df.columns]]
     return df
@@ -1640,6 +1656,58 @@ def selected_ujian_columns(filters: dict[str, list[str]], available_columns: lis
     return [column for column in available_columns if column in selected]
 
 
+def available_ujian_options(store: SupabaseStore) -> list[str]:
+    try:
+        results = store.get_results_data()
+    except Exception:
+        results = pd.DataFrame()
+    return assessment_columns_from_records(results)
+
+
+def assessment_columns_from_records(records: pd.DataFrame) -> list[str]:
+    discovered = [
+        column
+        for column in records.columns
+        if column not in ASSESSMENT_IDENTITY_COLUMNS and is_assessment_column(column)
+    ]
+    ordered = [column for column in UJIAN_OPTIONS if column in discovered or column in records.columns]
+    extras = sorted(column for column in discovered if column not in ordered)
+    return [*ordered, *extras]
+
+
+def is_assessment_column(column: str) -> bool:
+    normalized = str(column).upper().strip()
+    return (
+        normalized.startswith("SPM")
+        or normalized.startswith("PSPM")
+        or normalized.startswith("AMAT")
+    )
+
+
+def is_spm_assessment(column: str) -> bool:
+    return str(column).upper().strip().startswith("SPM")
+
+
+def is_pspm_assessment(column: str) -> bool:
+    return str(column).upper().strip().startswith("PSPM")
+
+
+def is_diagnostic_assessment(column: str) -> bool:
+    return str(column).upper().strip().startswith("AMAT")
+
+
+def spm_columns_from_records(records: pd.DataFrame) -> list[str]:
+    return [column for column in assessment_columns_from_records(records) if is_spm_assessment(column)]
+
+
+def pspm_columns_from_records(records: pd.DataFrame) -> list[str]:
+    return [column for column in assessment_columns_from_records(records) if is_pspm_assessment(column)]
+
+
+def diagnostic_columns_from_records(records: pd.DataFrame) -> list[str]:
+    return [column for column in assessment_columns_from_records(records) if is_diagnostic_assessment(column)]
+
+
 def grade_long_frame(records: pd.DataFrame, grade_columns: list[str]) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     for column in grade_columns:
@@ -1725,9 +1793,9 @@ def grade_matrix(records: pd.DataFrame, row_column: str, column_column: str) -> 
 
 
 def grade_order_for_column(column: str) -> list[str]:
-    if column in SPM_TEST_COLUMNS:
+    if is_spm_assessment(column):
         return SPM_GRADE_ORDER
-    if column in GRADE_TEST_COLUMNS:
+    if is_pspm_assessment(column):
         return PSPM_GRADE_ORDER
     return GRADE_ORDER
 
@@ -1789,9 +1857,9 @@ def render_grade_matrix_heatmap(records: pd.DataFrame, row_column: str, column_c
 
 
 def cgpa_map_for_column(column: str) -> dict[str, float]:
-    if column in SPM_TEST_COLUMNS:
+    if is_spm_assessment(column):
         return SPM_CGPA_MAP
-    if column in GRADE_TEST_COLUMNS:
+    if is_pspm_assessment(column):
         return PSPM_CGPA_MAP
     return {}
 
@@ -1943,13 +2011,13 @@ def progress_section_for_test(
     spm_long: pd.DataFrame,
     pspm_long: pd.DataFrame,
 ) -> tuple[str, pd.DataFrame, str, str, str] | None:
-    if column in DIAGNOSTIC_COLUMNS:
+    if is_diagnostic_assessment(column):
         frame = diagnostic_long[diagnostic_long["Test"] == column]
         return column, frame, "Score", "Average Mark", "Average Mark"
-    if column in SPM_TEST_COLUMNS:
+    if is_spm_assessment(column):
         frame = spm_long[spm_long["Test"] == column]
         return column, frame, "CGPA", "Average CGPA", "Average CGPA"
-    if column in GRADE_TEST_COLUMNS:
+    if is_pspm_assessment(column):
         frame = pspm_long[pspm_long["Test"] == column]
         return column, frame, "CGPA", "Average CGPA", "Average CGPA"
     return None
@@ -2037,19 +2105,33 @@ def ranked_metric(
 def assessment_value_mask(records: pd.DataFrame, assessment_column: str) -> pd.Series:
     if assessment_column not in records:
         return pd.Series(False, index=records.index)
-    if assessment_column in DIAGNOSTIC_COLUMNS:
+    if is_diagnostic_assessment(assessment_column):
         return pd.to_numeric(records[assessment_column], errors="coerce").notna()
-    if assessment_column in [*SPM_TEST_COLUMNS, *GRADE_TEST_COLUMNS]:
+    if is_spm_assessment(assessment_column) or is_pspm_assessment(assessment_column):
         return cgpa_series(records[assessment_column], assessment_column).notna()
     return records[assessment_column].notna() & (records[assessment_column].astype(str).str.strip() != "")
 
 
 def system_filtered_records(records: pd.DataFrame, system_label: str) -> pd.DataFrame:
-    if system_label == "Overall" or "SISTEM" not in records:
+    if system_label == "OVERALL" or "SISTEM" not in records:
         return records
-    return records[
-        records["SISTEM"].fillna("").astype(str).str.upper().str.strip() == system_label
-    ]
+    return records[system_bucket_series(records["SISTEM"]) == system_label]
+
+
+def system_bucket_series(values: pd.Series) -> pd.Series:
+    return values.fillna("").astype(str).map(system_bucket_label)
+
+
+def system_bucket_label(value: object) -> str:
+    normalized = " ".join(str(value).upper().replace("_", " ").replace("-", " ").split())
+    compact = normalized.replace(" ", "")
+    if "SDS" in compact:
+        return "SDS"
+    if "SES3" in compact or "SES4" in compact or "SES3/4" in compact or "SES34" in compact:
+        return "SES 3/4"
+    if "SES" in compact:
+        return "SES 1/2"
+    return ""
 
 
 def selected_plotly_points(event: object) -> list[dict]:
@@ -2104,7 +2186,7 @@ def render_progress_section(
     axis_title: str,
     base_records: pd.DataFrame,
 ) -> None:
-    system_tabs = st.tabs(["Overall", "SES", "SDS"])
+    system_tabs = st.tabs(PROGRESS_SYSTEM_TABS)
     for tab, (system_label, system_frame) in zip(system_tabs, split_system_frames(frame)):
         with tab:
             system_base = system_filtered_records(base_records, system_label)
@@ -2172,7 +2254,7 @@ def render_progress_assessment_cards(
     students_with_value = int(base_frame.loc[has_value_mask, "NO MATRIK"].nunique()) if "NO MATRIK" in base_frame else 0
     students_missing = max(total_students - students_with_value, 0)
     average_value = pd.to_numeric(assessment_frame.get(value_column, pd.Series(dtype=float)), errors="coerce").dropna()
-    average_label = "Average Mark" if assessment_column in DIAGNOSTIC_COLUMNS else "Average CGPA"
+    average_label = "Average Mark" if is_diagnostic_assessment(assessment_column) else "Average CGPA"
     average_display = "-" if average_value.empty else f"{average_value.mean():.2f}"
 
     cards = st.columns(4)
@@ -2188,9 +2270,9 @@ def render_progress_distribution(
     section_label: str,
     system_label: str,
 ) -> None:
-    if section_label in [*SPM_TEST_COLUMNS, *GRADE_TEST_COLUMNS]:
+    if is_spm_assessment(section_label) or is_pspm_assessment(section_label):
         render_progress_grade_heatmap(frame, group_column, section_label, system_label)
-    elif section_label in DIAGNOSTIC_COLUMNS:
+    elif is_diagnostic_assessment(section_label):
         render_diagnostic_mark_distribution(frame, section_label, system_label)
 
 
@@ -2214,7 +2296,7 @@ def render_progress_grade_heatmap(
     if clean.empty:
         return
 
-    grade_order = SPM_GRADE_ORDER if test_name in SPM_TEST_COLUMNS else PSPM_GRADE_ORDER
+    grade_order = SPM_GRADE_ORDER if is_spm_assessment(test_name) else PSPM_GRADE_ORDER
     matrix = pd.crosstab(clean[group_column], clean["GRADE"]).reindex(columns=grade_order, fill_value=0)
     matrix = matrix.loc[matrix.sum(axis=1) > 0]
     if matrix.empty:
@@ -2489,14 +2571,12 @@ def ranked_performance(performance_long: pd.DataFrame, group_column: str) -> pd.
 
 
 def split_system_frames(performance_long: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
-    frames = [("Overall", performance_long)]
-    for system in ["SES", "SDS"]:
+    frames = [("OVERALL", performance_long)]
+    for system in ["SDS", "SES 1/2", "SES 3/4"]:
         if "SISTEM" not in performance_long:
             frames.append((system, performance_long.iloc[0:0]))
             continue
-        system_frame = performance_long[
-            performance_long["SISTEM"].fillna("").astype(str).str.upper().str.strip() == system
-        ]
+        system_frame = performance_long[system_bucket_series(performance_long["SISTEM"]) == system]
         frames.append((system, system_frame))
     return frames
 
@@ -2599,6 +2679,7 @@ def main() -> None:
     base_records = store.fetch_base_records(user, results_mode="none")
     page, filters = sidebar_navigation(user, store, base_records)
     if page in [
+        "SPM ANALYSIS",
         "PSPM ANALYSIS",
         "DIAGNOSTIC ANALYSIS",
         "LECTURER PROGRESS",
@@ -2607,7 +2688,7 @@ def main() -> None:
         "DOWNLOAD",
     ]:
         base_records = store.fetch_base_records(user, results_mode="all")
-    elif page in ["SPM ANALYSIS", "DATA MANAGEMENT"]:
+    elif page in ["DATA MANAGEMENT"]:
         base_records = store.fetch_base_records(user, results_mode="spm")
     records = store.filter_records(base_records, filters)
     loading_slot.empty()

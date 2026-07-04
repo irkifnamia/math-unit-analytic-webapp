@@ -1137,7 +1137,7 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
                         st.error("Please fix the validation errors before saving.")
                         st.write(errors)
                     elif st.button("Save imported data", type="primary"):
-                        saved = store.bulk_upsert_reference(dataset_key, preview)
+                        saved = store.bulk_upsert_reference(dataset_key, preview, match_column=match_column)
                         history_logged = store.log_edit_history(
                             user,
                             "BULK IMPORT",
@@ -1147,12 +1147,14 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
                                 f"Match column: {match_column}. Updated columns: {', '.join(selected_update_columns)}."
                             ),
                         )
-                        set_data_management_success(
-                            f"Bulk import successful. {saved} {dataset_label.lower()} record(s) saved."
+                        success_message = (
+                            f"Bulk import successful. {saved} {dataset_label.lower()} record(s) saved. "
+                            f"Matching rows were overwritten by {match_column}; blank imported cells cleared existing values."
                         )
-                        st.success(f"Bulk import successful. {saved} {dataset_label.lower()} record(s) saved.")
+                        set_data_management_success(success_message)
+                        st.success(success_message)
                         try:
-                            st.toast(f"Bulk import successful. {saved} {dataset_label.lower()} record(s) saved.")
+                            st.toast(success_message)
                         except Exception:
                             pass
                         if not history_logged:

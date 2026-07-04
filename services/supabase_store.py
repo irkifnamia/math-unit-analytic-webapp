@@ -264,21 +264,29 @@ class SupabaseStore:
         saved = self.bulk_upsert_reference("students", df)
         return saved, 0
 
-    def bulk_upsert_reference(self, key: str, df: pd.DataFrame) -> int:
+    def bulk_upsert_reference(self, key: str, df: pd.DataFrame, match_column: str | None = None) -> int:
         table_name, allowed_columns = reference_table_and_columns(key)
-        current = self.reference_frame(key)
-        natural_key = natural_key_column(key)
+        match_column = match_column or natural_key_column(key)
         saved = 0
         for _, row in df.iterrows():
             raw = row.to_dict()
             payload = clean_payload(raw, allowed_columns, include_empty=True)
             if not payload:
                 continue
-            record_id = raw.get("id")
-            if is_empty_value(record_id) and natural_key in payload and natural_key in current:
-                matches = current[current[natural_key].astype(str) == str(payload[natural_key])]
-                if not matches.empty and "id" in matches:
-                    record_id = matches.iloc[0]["id"]
+            record_id = raw.get("id") if match_column == "id" else None
+            if is_empty_value(record_id) and match_column != "id":
+                match_value = raw.get(match_column)
+                if not is_empty_value(match_value):
+                    response = (
+                        self.client.table(table_name)
+                        .select("id")
+                        .eq(match_column, match_value)
+                        .limit(1)
+                        .execute()
+                    )
+                    matches = response.data or []
+                    if matches:
+                        record_id = matches[0].get("id")
             if is_empty_value(record_id):
                 self.client.table(table_name).insert(payload).execute()
             else:

@@ -753,17 +753,6 @@ def progress_rank_page(records: pd.DataFrame, filters: dict[str, list[str]], gro
     diagnostic_long = assessment_long_frame(records, diagnostic_columns)
     spm_long = cgpa_long_frame(records, spm_columns, "SPM")
     pspm_long = cgpa_long_frame(records, pspm_columns, "PSPM")
-    overall_long = overall_progress_frame(diagnostic_long, spm_long, pspm_long)
-    if overall_long.empty:
-        blank_state("No assessment data match the selected filters.")
-        return
-
-    kpis = st.columns(4)
-    kpis[0].metric("PELAJAR", f"{overall_long['NO MATRIK'].nunique():,}")
-    kpis[1].metric("Assessments", f"{overall_long['Test'].nunique():,}")
-    kpis[2].metric("CGPA", f"{overall_long['Value'].mean():.2f}")
-    kpis[3].metric(f"{group_label}s", f"{overall_long[group_column].nunique():,}" if group_column in overall_long else "0")
-
     sections = []
     for column in [*spm_columns, *diagnostic_columns, *pspm_columns]:
         section = progress_section_for_test(column, diagnostic_long, spm_long, pspm_long)
@@ -2102,13 +2091,11 @@ def render_progress_section(
     axis_title: str,
     base_records: pd.DataFrame,
 ) -> None:
-    if frame.empty:
-        blank_state(f"No {section_label.lower()} records match the selected filters.")
-        return
     system_tabs = st.tabs(["Overall", "SES", "SDS"])
     for tab, (system_label, system_frame) in zip(system_tabs, split_system_frames(frame)):
         with tab:
             system_base = system_filtered_records(base_records, system_label)
+            render_progress_assessment_cards(system_base, system_frame, section_label, value_column, metric_label)
             rank = ranked_metric(
                 system_frame,
                 group_column,
@@ -2158,6 +2145,28 @@ def render_progress_section(
                     selected_frame,
                 )
             render_progress_distribution(system_frame, group_column, section_label, system_label)
+
+
+def render_progress_assessment_cards(
+    base_frame: pd.DataFrame,
+    assessment_frame: pd.DataFrame,
+    assessment_column: str,
+    value_column: str,
+    metric_label: str,
+) -> None:
+    total_students = int(base_frame["NO MATRIK"].nunique()) if "NO MATRIK" in base_frame else 0
+    has_value_mask = assessment_value_mask(base_frame, assessment_column)
+    students_with_value = int(base_frame.loc[has_value_mask, "NO MATRIK"].nunique()) if "NO MATRIK" in base_frame else 0
+    students_missing = max(total_students - students_with_value, 0)
+    average_value = pd.to_numeric(assessment_frame.get(value_column, pd.Series(dtype=float)), errors="coerce").dropna()
+    average_label = "Average Mark" if assessment_column in DIAGNOSTIC_COLUMNS else "Average CGPA"
+    average_display = "-" if average_value.empty else f"{average_value.mean():.2f}"
+
+    cards = st.columns(4)
+    cards[0].metric("TOTAL PELAJAR", f"{total_students:,}")
+    cards[1].metric("HAS MARK/GRADE", f"{students_with_value:,}")
+    cards[2].metric("NO MARK/GRADE", f"{students_missing:,}")
+    cards[3].metric(average_label, average_display)
 
 
 def render_progress_distribution(

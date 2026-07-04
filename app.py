@@ -392,21 +392,10 @@ def demography_dashboard(records: pd.DataFrame, user: dict) -> None:
         st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("Filtered Records")
-    st.dataframe(
-        records[
-            [
-                "NO MATRIK",
-                "NAMA PELAJAR",
-                "JURUSAN",
-                "SISTEM",
-                "KELAS",
-                "SUBJEK",
-                "PROGRAM",
-                "PENSYARAH",
-            ]
-        ],
-        use_container_width=True,
-        hide_index=True,
+    render_data_table(
+        records[["NO MATRIK", "NAMA PELAJAR", "JURUSAN", "SISTEM", "KELAS", "SUBJEK", "PROGRAM", "PENSYARAH"]],
+        "demography_filtered_records",
+        "Filtered Demography Records",
     )
 
 
@@ -437,8 +426,8 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
     kpis = st.columns(4)
     kpis[0].metric("SPM Math Records", f"{spm_records['SPM_MATH'].notna().sum():,}" if "SPM_MATH" in spm_records else "0")
     kpis[1].metric("SPM Add Math Records", f"{spm_records['SPM_ADDMATH'].notna().sum():,}" if "SPM_ADDMATH" in spm_records else "0")
-    kpis[2].metric("SPM Math Grades", f"{spm_records['SPM_MATH'].nunique():,}" if "SPM_MATH" in spm_records else "0")
-    kpis[3].metric("SPM Add Math Grades", f"{spm_records['SPM_ADDMATH'].nunique():,}" if "SPM_ADDMATH" in spm_records else "0")
+    kpis[2].metric("ADDMATH A+, A, A-", f"{count_grades(spm_records, 'SPM_ADDMATH', ['A+', 'A', 'A-']):,}")
+    kpis[3].metric("ADDMATH E, G", f"{count_grades(spm_records, 'SPM_ADDMATH', ['E', 'G']):,}")
 
     grade_long = grade_long_frame(spm_records, selected_spm_columns)
     grade_counts = grade_long.value_counts(["RESULT", "GRADE"]).reset_index(name="COUNT")
@@ -502,12 +491,12 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
 
     st.subheader("SPM ADDMATH vs SPM MATH Grade Matrix")
     if {"SPM_MATH", "SPM_ADDMATH"}.issubset(selected_spm_columns):
-        render_grade_matrix(spm_records, "SPM_MATH", "SPM_ADDMATH")
+        render_grade_matrix_heatmap(spm_records, "SPM_ADDMATH", "SPM_MATH")
     else:
         blank_state("Select both SPM_MATH and SPM_ADDMATH in Ujian to view the grade matrix.")
 
     st.subheader("Filtered SPM Records")
-    st.dataframe(
+    render_data_table(
         spm_records[
             [
                 "NO MATRIK",
@@ -518,8 +507,8 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
                 *selected_spm_columns,
             ]
         ],
-        use_container_width=True,
-        hide_index=True,
+        "filtered_spm_records",
+        "Filtered SPM Records",
     )
 
 
@@ -543,10 +532,10 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
         return
 
     kpis = st.columns(4)
-    kpis[0].metric("Students", f"{pspm_records['NO MATRIK'].nunique():,}" if "NO MATRIK" in pspm_records else "0")
-    kpis[1].metric("DM015 Records", f"{pspm_records['PSPM_DM015'].notna().sum():,}" if "PSPM_DM015" in pspm_records else "0")
-    kpis[2].metric("DM025 Records", f"{pspm_records['PSPM_DM025'].notna().sum():,}" if "PSPM_DM025" in pspm_records else "0")
-    kpis[3].metric("SEM Results", f"{pspm_records[['PSPM_SEM1', 'PSPM_SEM2']].notna().sum().sum():,}" if {"PSPM_SEM1", "PSPM_SEM2"}.issubset(pspm_records.columns) else "0")
+    kpis[0].metric("Average CGPA PSPM DM015", format_average_cgpa(pspm_records, "PSPM_DM015"))
+    kpis[1].metric("Average CGPA PSPM DM025", format_average_cgpa(pspm_records, "PSPM_DM025"))
+    kpis[2].metric("Average CGPA PSPM SEM 1", format_average_cgpa(pspm_records, "PSPM_SEM1"))
+    kpis[3].metric("Average CGPA PSPM SEM 2", format_average_cgpa(pspm_records, "PSPM_SEM2"))
 
     left, right = st.columns(2)
     with left:
@@ -571,10 +560,10 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
     left, right = st.columns(2)
     with left:
         st.subheader("PSPM DM015 vs PSPM DM025 Matrix")
-        render_grade_matrix(pspm_records, "PSPM_DM015", "PSPM_DM025")
+        render_grade_matrix_heatmap(pspm_records, "PSPM_DM015", "PSPM_DM025")
     with right:
         st.subheader("PSPM SEM1 vs PSPM SEM2 Matrix")
-        render_grade_matrix(pspm_records, "PSPM_SEM1", "PSPM_SEM2")
+        render_grade_matrix_heatmap(pspm_records, "PSPM_SEM1", "PSPM_SEM2")
 
     st.subheader("Filtered PSPM Records")
     display_cols = [
@@ -587,7 +576,11 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
         "SISTEM",
         *pspm_columns,
     ]
-    st.dataframe(pspm_records[[col for col in display_cols if col in pspm_records.columns]], hide_index=True, use_container_width=True)
+    render_data_table(
+        pspm_records[[col for col in display_cols if col in pspm_records.columns]],
+        "filtered_pspm_records",
+        "Filtered PSPM Records",
+    )
 
 
 def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
@@ -688,7 +681,11 @@ def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, l
         "PROGRAM",
         *diagnostic_columns,
     ]
-    st.dataframe(records[[col for col in display_cols if col in records.columns]], hide_index=True, use_container_width=True)
+    render_data_table(
+        records[[col for col in display_cols if col in records.columns]],
+        "diagnostic_records",
+        "Diagnostic Records",
+    )
 
 
 def lecturer_progress_page(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
@@ -767,7 +764,7 @@ def progress_rank_page(records: pd.DataFrame, filters: dict[str, list[str]], gro
     kpis[2].metric("CGPA", f"{overall_long['Value'].mean():.2f}")
     kpis[3].metric(f"{group_label}s", f"{overall_long[group_column].nunique():,}" if group_column in overall_long else "0")
 
-    sections = [("Overall", overall_long, "Value", "CGPA", "CGPA")]
+    sections = []
     for column in [*spm_columns, *diagnostic_columns, *pspm_columns]:
         section = progress_section_for_test(column, diagnostic_long, spm_long, pspm_long)
         if section:
@@ -783,6 +780,7 @@ def progress_rank_page(records: pd.DataFrame, filters: dict[str, list[str]], gro
                 value_column,
                 metric_label,
                 axis_title,
+                records,
             )
 
 
@@ -836,7 +834,7 @@ def download_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> No
         return
 
     export_df = filtered[selected_columns].copy()
-    st.dataframe(export_df.head(500), hide_index=True, use_container_width=True)
+    render_data_table(export_df.head(500), "download_preview", "Download Preview")
     render_download_buttons(export_df, "custom_download_filtered_data", "Custom Download Data", user, store)
 
 
@@ -926,7 +924,7 @@ def admin_user_access_section(user: dict, store: SupabaseStore) -> None:
                 "updated_at": "UPDATED AT",
             }
         )
-        st.dataframe(access_table, hide_index=True, use_container_width=True)
+        render_data_table(access_table, "admin_user_access", "Admin User Access")
         delete_options = {
             f"{row.get('ic_number', '')} | {row.get('full_name', '')} | {row.get('role', '')}": row.get("id")
             for _, row in editable_users.iterrows()
@@ -1006,7 +1004,7 @@ def admin_activity_section(store: SupabaseStore) -> None:
             "details": "DETAILS",
         }
     )
-    st.dataframe(history_table, hide_index=True, use_container_width=True)
+    render_data_table(history_table, "admin_app_activity", "Admin App Activity")
 
 
 def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> None:
@@ -1034,7 +1032,7 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
             key="delete_record_search",
         )
         record_candidates = search_dataset(dataset, record_search, dataset_key)
-        st.dataframe(record_candidates, hide_index=True, use_container_width=True)
+        render_data_table(record_candidates, f"{dataset_key}_view_delete", f"{dataset_label} View or Delete")
         delete_options = dataset_option_map(record_candidates, dataset_key)
         selected_labels = st.multiselect("Select records to delete", list(delete_options.keys()))
         selected_ids = [delete_options[label] for label in selected_labels]
@@ -1134,7 +1132,7 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
                         match_column,
                     )
                     st.subheader("Preview")
-                    st.dataframe(preview, hide_index=True, use_container_width=True)
+                    render_data_table(preview, f"{dataset_key}_import_preview", f"{dataset_label} Import Preview")
                     if errors:
                         st.error("Please fix the validation errors before saving.")
                         st.write(errors)
@@ -1160,7 +1158,7 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
 
     with tab_refs:
         st.subheader(f"{dataset_label} Reference Data")
-        st.dataframe(dataset, hide_index=True, use_container_width=True)
+        render_data_table(dataset, f"{dataset_key}_reference_data", f"{dataset_label} Reference Data")
         st.caption(f"Writable columns: {', '.join(writable_columns)}")
 
 
@@ -1335,6 +1333,51 @@ def dataset_form_fields(columns: list[str], selected_row: pd.Series | None) -> d
                 value=field_value(selected_row, column),
             )
     return payload
+
+
+def safe_key(value: str) -> str:
+    return "".join(character if character.isalnum() else "_" for character in str(value)).strip("_").lower()
+
+
+def render_table_download_menu(df: pd.DataFrame, file_stem: str, title: str) -> None:
+    if df.empty:
+        return
+    menu_cols = st.columns([10, 1])
+    with menu_cols[1]:
+        stem = safe_key(file_stem) or "table"
+        if hasattr(st, "popover"):
+            with st.popover("⋯", help="Download table"):
+                st.download_button(
+                    "CSV",
+                    df.to_csv(index=False).encode("utf-8-sig"),
+                    file_name=f"{stem}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key=f"{stem}_table_csv",
+                )
+                st.download_button(
+                    "Excel",
+                    dataframe_to_excel_bytes(df, title),
+                    file_name=f"{stem}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key=f"{stem}_table_xlsx",
+                )
+        else:
+            with st.expander("Download", expanded=False):
+                st.download_button("CSV", df.to_csv(index=False).encode("utf-8-sig"), f"{stem}.csv", "text/csv", key=f"{stem}_table_csv")
+                st.download_button("Excel", dataframe_to_excel_bytes(df, title), f"{stem}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"{stem}_table_xlsx")
+
+
+def render_data_table(
+    df: pd.DataFrame,
+    file_stem: str,
+    title: str,
+    hide_index: bool = True,
+    use_container_width: bool = True,
+) -> None:
+    render_table_download_menu(df, file_stem, title)
+    st.dataframe(df, hide_index=hide_index, use_container_width=use_container_width)
 
 
 def render_download_buttons(
@@ -1650,6 +1693,13 @@ def render_grade_proportion_chart(records: pd.DataFrame, columns: list[str], tit
     st.plotly_chart(fig, use_container_width=True)
 
 
+def count_grades(records: pd.DataFrame, column: str, grades: list[str]) -> int:
+    if column not in records:
+        return 0
+    clean = records[column].replace({None: pd.NA}).astype("string").str.strip()
+    return int(clean.isin(grades).sum())
+
+
 def grade_matrix(records: pd.DataFrame, row_column: str, column_column: str) -> pd.DataFrame:
     if not {row_column, column_column}.issubset(records.columns):
         return pd.DataFrame()
@@ -1663,13 +1713,68 @@ def grade_matrix(records: pd.DataFrame, row_column: str, column_column: str) -> 
     return pd.crosstab(clean[row_column], clean[column_column])
 
 
-def render_grade_matrix(records: pd.DataFrame, row_column: str, column_column: str) -> None:
+def grade_order_for_column(column: str) -> list[str]:
+    if column in SPM_TEST_COLUMNS:
+        return SPM_GRADE_ORDER
+    if column in GRADE_TEST_COLUMNS:
+        return PSPM_GRADE_ORDER
+    return GRADE_ORDER
+
+
+def render_grade_matrix_heatmap(records: pd.DataFrame, row_column: str, column_column: str) -> None:
     matrix = grade_matrix(records, row_column, column_column)
     if matrix.empty:
         blank_state(f"No paired grades available for {row_column} and {column_column}.")
         return
-    matrix = matrix.reindex(index=GRADE_ORDER, columns=GRADE_ORDER, fill_value=0).dropna(how="all")
-    st.dataframe(matrix, use_container_width=True)
+    row_order = grade_order_for_column(row_column)
+    column_order = grade_order_for_column(column_column)
+    matrix = matrix.reindex(index=row_order, columns=column_order, fill_value=0)
+    matrix = matrix.loc[matrix.sum(axis=1) > 0, matrix.sum(axis=0) > 0]
+    if matrix.empty:
+        blank_state(f"No paired grades available for {row_column} and {column_column}.")
+        return
+    export_matrix = matrix.reset_index().rename(columns={row_column: row_column})
+    render_table_download_menu(
+        export_matrix,
+        f"{row_column}_{column_column}_matrix",
+        f"{row_column} vs {column_column} Matrix",
+    )
+
+    max_count = float(matrix.to_numpy().max() or 0)
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=matrix.to_numpy(),
+            x=matrix.columns.tolist(),
+            y=matrix.index.tolist(),
+            colorscale="YlGnBu",
+            colorbar=dict(title="Count"),
+            xgap=1,
+            ygap=1,
+            hovertemplate=f"{row_column}: %{{y}}<br>{column_column}: %{{x}}<br>Students: %{{z:,}}<extra></extra>",
+        )
+    )
+    for row_index, row_grade in enumerate(matrix.index.tolist()):
+        for column_index, column_grade in enumerate(matrix.columns.tolist()):
+            value = int(matrix.loc[row_grade, column_grade])
+            if value == 0:
+                continue
+            text_color = "#ffffff" if max_count and value >= max_count * 0.55 else "#000000"
+            fig.add_annotation(
+                x=column_grade,
+                y=row_grade,
+                text=f"{value:,}",
+                showarrow=False,
+                font=dict(color=text_color, size=12),
+            )
+    fig.update_layout(
+        height=min(640, max(360, 34 * len(matrix.index) + 150)),
+        xaxis_title=column_column,
+        yaxis_title=row_column,
+        margin=dict(l=20, r=20, t=25, b=45),
+        plot_bgcolor="#ffffff",
+    )
+    fig.update_yaxes(autorange="reversed")
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def cgpa_map_for_column(column: str) -> dict[str, float]:
@@ -1700,6 +1805,15 @@ def average_cgpa_frame(records: pd.DataFrame, columns: list[str]) -> pd.DataFram
             }
         )
     return pd.DataFrame(rows)
+
+
+def format_average_cgpa(records: pd.DataFrame, column: str) -> str:
+    if column not in records:
+        return "-"
+    cgpa = cgpa_series(records[column], column).dropna()
+    if cgpa.empty:
+        return "-"
+    return f"{cgpa.mean():.2f}"
 
 
 def render_average_cgpa_comparison(records: pd.DataFrame, columns: list[str], title: str) -> None:
@@ -1835,30 +1949,96 @@ def ranked_metric(
     group_column: str,
     value_column: str,
     metric_label: str,
+    base_frame: pd.DataFrame | None = None,
+    assessment_column: str | None = None,
 ) -> pd.DataFrame:
+    columns = ["Rank", group_column, metric_label, "TOTAL PELAJAR", "NO MARK/GRADE"]
+    if base_frame is not None and assessment_column and group_column in base_frame and assessment_column in base_frame:
+        base_clean = base_frame[
+            base_frame[group_column].notna()
+            & (base_frame[group_column].astype(str).str.strip() != "")
+        ].copy()
+        if not base_clean.empty:
+            has_value = assessment_value_mask(base_clean, assessment_column)
+            missing = (
+                base_clean.loc[~has_value]
+                .groupby(group_column)["NO MATRIK"]
+                .nunique()
+                .reset_index(name="NO MARK/GRADE")
+            )
+            all_groups = (
+                base_clean.groupby(group_column)["NO MATRIK"]
+                .nunique()
+                .reset_index(name="TOTAL PELAJAR")
+            )
+        else:
+            missing = pd.DataFrame(columns=[group_column, "NO MARK/GRADE"])
+            all_groups = pd.DataFrame(columns=[group_column, "TOTAL PELAJAR"])
+    else:
+        missing = pd.DataFrame(columns=[group_column, "NO MARK/GRADE"])
+        all_groups = pd.DataFrame(columns=[group_column, "TOTAL PELAJAR"])
+
     if frame.empty or group_column not in frame or value_column not in frame:
-        return pd.DataFrame(columns=["Rank", group_column, metric_label, "PELAJAR"])
-    clean = frame[
-        frame[group_column].notna()
-        & (frame[group_column].astype(str).str.strip() != "")
-        & frame[value_column].notna()
-    ].copy()
-    if clean.empty:
-        return pd.DataFrame(columns=["Rank", group_column, metric_label, "PELAJAR"])
-    rank = (
-        clean.groupby(group_column)
-        .agg(
-            **{
-                metric_label: (value_column, "mean"),
-                "PELAJAR": ("NO MATRIK", "nunique"),
-            }
-        )
-        .reset_index()
-        .sort_values(metric_label, ascending=False)
-    )
+        rank = all_groups.assign(**{metric_label: pd.NA, "_VALID_PELAJAR": 0})
+    else:
+        clean = frame[
+            frame[group_column].notna()
+            & (frame[group_column].astype(str).str.strip() != "")
+            & frame[value_column].notna()
+        ].copy()
+        if clean.empty:
+            rank = all_groups.assign(**{metric_label: pd.NA, "_VALID_PELAJAR": 0})
+        else:
+            rank = (
+                clean.groupby(group_column)
+                .agg(
+                    **{
+                        metric_label: (value_column, "mean"),
+                        "_VALID_PELAJAR": ("NO MATRIK", "nunique"),
+                    }
+                )
+                .reset_index()
+            )
+            if not all_groups.empty:
+                rank = all_groups.merge(rank, on=group_column, how="left")
+                rank["_VALID_PELAJAR"] = rank["_VALID_PELAJAR"].fillna(0).astype(int)
+            rank = rank.sort_values(metric_label, ascending=False, na_position="last")
+
+    if not missing.empty:
+        rank = rank.merge(missing, on=group_column, how="left")
+    elif "NO MARK/GRADE" not in rank:
+        rank["NO MARK/GRADE"] = 0
+    rank["NO MARK/GRADE"] = rank["NO MARK/GRADE"].fillna(0).astype(int)
+    if "TOTAL PELAJAR" not in rank:
+        valid_count = rank["_VALID_PELAJAR"] if "_VALID_PELAJAR" in rank else 0
+        rank["TOTAL PELAJAR"] = valid_count + rank["NO MARK/GRADE"]
+    rank["TOTAL PELAJAR"] = rank["TOTAL PELAJAR"].fillna(0).astype(int)
+    if "_VALID_PELAJAR" in rank:
+        rank = rank.drop(columns=["_VALID_PELAJAR"])
+    if rank.empty:
+        return pd.DataFrame(columns=columns)
+    rank = rank.sort_values(metric_label, ascending=False, na_position="last").reset_index(drop=True)
     rank.insert(0, "Rank", range(1, len(rank) + 1))
-    rank[metric_label] = rank[metric_label].round(2)
-    return rank
+    rank[metric_label] = pd.to_numeric(rank[metric_label], errors="coerce").round(2)
+    return rank[[column for column in columns if column in rank.columns]]
+
+
+def assessment_value_mask(records: pd.DataFrame, assessment_column: str) -> pd.Series:
+    if assessment_column not in records:
+        return pd.Series(False, index=records.index)
+    if assessment_column in DIAGNOSTIC_COLUMNS:
+        return pd.to_numeric(records[assessment_column], errors="coerce").notna()
+    if assessment_column in [*SPM_TEST_COLUMNS, *GRADE_TEST_COLUMNS]:
+        return cgpa_series(records[assessment_column], assessment_column).notna()
+    return records[assessment_column].notna() & (records[assessment_column].astype(str).str.strip() != "")
+
+
+def system_filtered_records(records: pd.DataFrame, system_label: str) -> pd.DataFrame:
+    if system_label == "Overall" or "SISTEM" not in records:
+        return records
+    return records[
+        records["SISTEM"].fillna("").astype(str).str.upper().str.strip() == system_label
+    ]
 
 
 def selected_plotly_points(event: object) -> list[dict]:
@@ -1901,7 +2081,7 @@ def render_selected_students(title: str, frame: pd.DataFrame) -> None:
         na_position="last",
     )
     st.markdown(f"**{title}**")
-    st.dataframe(detail, hide_index=True, use_container_width=True)
+    render_data_table(detail, f"selected_students_{safe_key(title)}", title)
 
 
 def render_progress_section(
@@ -1911,6 +2091,7 @@ def render_progress_section(
     value_column: str,
     metric_label: str,
     axis_title: str,
+    base_records: pd.DataFrame,
 ) -> None:
     if frame.empty:
         blank_state(f"No {section_label.lower()} records match the selected filters.")
@@ -1918,7 +2099,15 @@ def render_progress_section(
     system_tabs = st.tabs(["Overall", "SES", "SDS"])
     for tab, (system_label, system_frame) in zip(system_tabs, split_system_frames(frame)):
         with tab:
-            rank = ranked_metric(system_frame, group_column, value_column, metric_label)
+            system_base = system_filtered_records(base_records, system_label)
+            rank = ranked_metric(
+                system_frame,
+                group_column,
+                value_column,
+                metric_label,
+                system_base,
+                section_label,
+            )
             selected_groups: list[str] = []
             left, right = st.columns([1.1, 1])
             with left:
@@ -1936,6 +2125,8 @@ def render_progress_section(
                 if rank.empty:
                     blank_state(f"No {section_label.lower()} records for {system_label}.")
                 else:
+                    rank_title = f"{group_column} {section_label} {system_label} Rank"
+                    render_table_download_menu(rank, safe_key(rank_title), rank_title)
                     try:
                         table_event = st.dataframe(
                             rank,
@@ -2287,18 +2478,19 @@ def render_rank_chart(
     axis_title: str,
     chart_key: str,
 ) -> list[str]:
-    if rank.empty:
+    chart_rank = rank.dropna(subset=[metric_label]) if metric_label in rank else rank
+    if chart_rank.empty:
         blank_state(f"No records for {title}.")
         return []
     fig = px.bar(
-        rank.head(12),
+        chart_rank.head(12),
         x=metric_label,
         y=group_column,
         orientation="h",
         title=title,
         color=metric_label,
         color_continuous_scale="YlGnBu",
-        hover_data=["Rank", "PELAJAR"],
+        hover_data=[column for column in ["Rank", "TOTAL PELAJAR", "NO MARK/GRADE"] if column in chart_rank.columns],
     )
     fig.update_layout(
         height=390,

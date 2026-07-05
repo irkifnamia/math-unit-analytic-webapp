@@ -1247,9 +1247,9 @@ def apply_detailed_info_assessment_filters(records: pd.DataFrame) -> pd.DataFram
     if grade_columns or mark_columns:
         st.markdown("**Assessment Filters**")
 
-    for row_start in range(0, len(grade_columns), 4):
-        row_columns = st.columns(4)
-        for layout_column, column in zip(row_columns, grade_columns[row_start : row_start + 4]):
+    for row_start in range(0, len(grade_columns), 6):
+        row_columns = st.columns(6)
+        for layout_column, column in zip(row_columns, grade_columns[row_start : row_start + 6]):
             with layout_column:
                 order = cgpa_grade_order_for_column(column)
                 existing = source[column].replace({None: pd.NA}).astype("string").str.strip()

@@ -642,14 +642,14 @@ def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, l
     sm_tab, am_tab, dm_tab = st.tabs(["SM", "AM", "DM"])
     with sm_tab:
         sm_records = subject_filtered_records(records, "SM")
-        render_sm_diagnostic_analysis(sm_records, filters)
+        render_sm_diagnostic_analysis(sm_records, filters, "SM")
     with am_tab:
         blank_state("AM diagnostic analysis will be added later.")
     with dm_tab:
         blank_state("DM diagnostic analysis will be added later.")
 
 
-def render_sm_diagnostic_analysis(records: pd.DataFrame, filters: dict[str, list[str]]) -> None:
+def render_sm_diagnostic_analysis(records: pd.DataFrame, filters: dict[str, list[str]], subject: str) -> None:
     if records.empty:
         blank_state("No SM records match the selected filters.")
         return
@@ -695,15 +695,15 @@ def render_sm_diagnostic_analysis(records: pd.DataFrame, filters: dict[str, list
 
     left, right = st.columns(2)
     with left:
-        sistem_heatmap = diagnostic_long.pivot_table(
+        sistem_long = diagnostic_long.copy()
+        sistem_long["SISTEM"] = system_bucket_series(sistem_long["SISTEM"])
+        sistem_long = sistem_long[sistem_long["SISTEM"].astype(str).str.strip() != ""]
+        sistem_heatmap = sistem_long.pivot_table(
             index="Test",
             columns="SISTEM",
             values="Score",
             aggfunc="mean",
-        ).reindex(index=diagnostic_columns)
-        preferred_systems = [system for system in ["SES", "SDS"] if system in sistem_heatmap.columns]
-        if preferred_systems:
-            sistem_heatmap = sistem_heatmap[preferred_systems]
+        ).reindex(index=diagnostic_columns, columns=diagnostic_sistem_columns(subject))
         fig = px.imshow(
             sistem_heatmap.round(1),
             aspect="auto",
@@ -781,6 +781,17 @@ def render_sm_diagnostic_analysis(records: pd.DataFrame, filters: dict[str, list
             margin=dict(l=20, r=20, t=55, b=20),
         )
         st.plotly_chart(fig, use_container_width=True)
+
+
+def diagnostic_sistem_columns(subject: str) -> list[str]:
+    subject_code = str(subject).strip().upper()
+    if subject_code == "SM":
+        return ["SDS", "SES 3/4"]
+    if subject_code == "AM":
+        return ["SDS"]
+    if subject_code == "DM":
+        return ["SES 1/2"]
+    return ["SDS", "SES 1/2", "SES 3/4"]
 
 
 def subject_filtered_records(records: pd.DataFrame, subject_code: str) -> pd.DataFrame:
@@ -1490,9 +1501,7 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
     dataset_key = DATASET_OPTIONS[dataset_label]
     dataset = dataset_frame(dataset_key, refs)
     writable_columns = store.writable_columns(dataset_key)
-    tab_records, tab_form, tab_import, tab_refs = st.tabs(
-        ["View or Delete", "Create or Update", "Bulk Import", "Reference Data"]
-    )
+    tab_records, tab_form, tab_import = st.tabs(["View or Delete", "Create or Update", "Bulk Import"])
 
     with tab_records:
         st.subheader(f"{dataset_label} View or Delete")
@@ -1636,12 +1645,6 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
                             )
                             if saved_import:
                                 st.rerun()
-
-    with tab_refs:
-        st.subheader(f"{dataset_label} Reference Data")
-        render_data_table(dataset, f"{dataset_key}_reference_data", f"{dataset_label} Reference Data")
-        st.caption(f"Writable columns: {', '.join(writable_columns)}")
-
 
 def dataset_frame(dataset_key: str, refs: dict[str, pd.DataFrame]) -> pd.DataFrame:
     df = refs.get(dataset_key, pd.DataFrame()).copy()

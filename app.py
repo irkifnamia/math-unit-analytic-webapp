@@ -136,7 +136,7 @@ def login_screen(store: SupabaseStore) -> None:
     with center:
         app_brand()
         with st.form("login_form"):
-            ic_number = st.text_input("IC Number", placeholder="Example: 900101-14-5555")
+            ic_number = st.text_input("PASSWORD", placeholder="Example: 900101-14-5555")
             submitted = st.form_submit_button("Sign in", use_container_width=True)
         if submitted:
             user = authenticate_ic_number(ic_number, store)
@@ -892,6 +892,7 @@ def class_profile_section(records: pd.DataFrame) -> None:
         class_records,
         "Class Students",
         ["NO MATRIK", "NAMA PELAJAR", "PROGRAM", *grade_assessment_columns_from_records(class_records)],
+        allow_download=False,
     )
     render_profile_spm_cards(class_records, average=True)
     render_profile_pspm_all_cards(class_records)
@@ -927,11 +928,12 @@ def lecturer_profile_section(records: pd.DataFrame) -> None:
         }
     )
     st.markdown("**Class List**")
-    render_data_table(pd.DataFrame({"KELAS": classes}), f"profile_{safe_key(selected_lecturer)}_classes", "Lecturer Classes")
+    st.dataframe(pd.DataFrame({"KELAS": classes}), hide_index=True, use_container_width=True)
     render_profile_students(
         lecturer_records,
         "Lecturer Students",
         ["NO MATRIK", "NAMA PELAJAR", "KELAS", "SISTEM", "PROGRAM", *grade_assessment_columns_from_records(lecturer_records)],
+        allow_download=False,
     )
     render_profile_spm_cards(lecturer_records, average=True)
     render_profile_pspm_dm_cards(lecturer_records)
@@ -1042,7 +1044,12 @@ def first_nonempty_value(values: pd.Series) -> str:
     return str(clean.iloc[0])
 
 
-def render_profile_students(records: pd.DataFrame, title: str, columns: list[str] | None = None) -> None:
+def render_profile_students(
+    records: pd.DataFrame,
+    title: str,
+    columns: list[str] | None = None,
+    allow_download: bool = True,
+) -> None:
     columns = columns or [
         "NO MATRIK",
         "NAMA PELAJAR",
@@ -1053,7 +1060,10 @@ def render_profile_students(records: pd.DataFrame, title: str, columns: list[str
         "PROGRAM",
     ]
     table = records[[column for column in columns if column in records.columns]].drop_duplicates()
-    render_data_table(table, safe_key(title), title)
+    if allow_download:
+        render_data_table(table, safe_key(title), title)
+    else:
+        st.dataframe(table, hide_index=True, use_container_width=True)
 
 
 def render_profile_progress(records: pd.DataFrame, title: str) -> None:
@@ -1153,18 +1163,24 @@ def progress_rank_page(records: pd.DataFrame, filters: dict[str, list[str]], gro
         if section:
             sections.append(section)
 
-    tabs = st.tabs([section[0] for section in sections])
-    for tab, (section_label, frame, value_column, metric_label, axis_title) in zip(tabs, sections):
-        with tab:
-            render_progress_section(
-                frame,
-                group_column,
-                section_label,
-                value_column,
-                metric_label,
-                axis_title,
-                records,
-            )
+    section_labels = [section[0] for section in sections]
+    selected_section_label = st.radio(
+        "Assessment",
+        section_labels,
+        horizontal=True,
+        key=f"{group_column}_progress_assessment",
+    )
+    section_lookup = {section[0]: section for section in sections}
+    section_label, frame, value_column, metric_label, axis_title = section_lookup[selected_section_label]
+    render_progress_section(
+        frame,
+        group_column,
+        section_label,
+        value_column,
+        metric_label,
+        axis_title,
+        records,
+    )
 
 
 def download_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> None:
@@ -1201,6 +1217,7 @@ def download_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> No
     )
 
     filtered = records.copy()
+    filtered = apply_detailed_info_assessment_filters(filtered)
 
     search_text = st.text_input(
         "Search rows",
@@ -1219,6 +1236,75 @@ def download_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> No
     export_df = filtered[selected_columns].copy()
     render_data_table(export_df.head(500), "download_preview", "Download Preview")
     render_download_buttons(export_df, "custom_download_filtered_data", "Custom Download Data", user, store)
+
+
+def apply_detailed_info_assessment_filters(records: pd.DataFrame) -> pd.DataFrame:
+    source = records.copy()
+    filtered = records.copy()
+    grade_columns = grade_assessment_columns_from_records(source)
+    mark_columns = diagnostic_columns_from_records(source)
+
+    if grade_columns or mark_columns:
+        st.markdown("**Assessment Filters**")
+
+    for row_start in range(0, len(grade_columns), 4):
+        row_columns = st.columns(4)
+        for layout_column, column in zip(row_columns, grade_columns[row_start : row_start + 4]):
+            with layout_column:
+                order = cgpa_grade_order_for_column(column)
+                existing = source[column].replace({None: pd.NA}).astype("string").str.strip()
+                options = [grade for grade in order if grade in set(existing.dropna().tolist())]
+                extra_options = sorted(
+                    grade
+                    for grade in existing.dropna().unique().tolist()
+                    if grade and grade not in options
+                )
+                options = [*options, *extra_options]
+                selected = st.multiselect(
+                    column,
+                    options,
+                    placeholder=f"All {column} grades",
+                    key=f"detailed_info_grade_filter_{column}",
+                )
+                if selected:
+                    filtered = filtered[
+                        filtered[column].replace({None: pd.NA}).astype("string").str.strip().isin(selected)
+                    ]
+
+    for row_start in range(0, len(mark_columns), 4):
+        row_columns = st.columns(4)
+        for layout_column, column in zip(row_columns, mark_columns[row_start : row_start + 4]):
+            with layout_column:
+                scores = pd.to_numeric(source[column], errors="coerce").dropna()
+                min_score = float(scores.min()) if not scores.empty else 0.0
+                max_score = float(scores.max()) if not scores.empty else 100.0
+                st.caption(column)
+                range_columns = st.columns(2)
+                with range_columns[0]:
+                    selected_min = st.number_input(
+                        "From",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=min_score,
+                        step=1.0,
+                        key=f"detailed_info_mark_min_{column}",
+                    )
+                with range_columns[1]:
+                    selected_max = st.number_input(
+                        "To",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=max_score,
+                        step=1.0,
+                        key=f"detailed_info_mark_max_{column}",
+                    )
+                if not scores.empty:
+                    lower = min(selected_min, selected_max)
+                    upper = max(selected_min, selected_max)
+                    column_scores = pd.to_numeric(filtered[column], errors="coerce")
+                    filtered = filtered[column_scores.between(lower, upper, inclusive="both")]
+
+    return filtered
 
 
 def admin_page(user: dict, store: SupabaseStore) -> None:
@@ -2139,6 +2225,14 @@ def grade_assessment_columns_from_records(records: pd.DataFrame) -> list[str]:
     ]
 
 
+def cgpa_grade_order_for_column(column: str) -> list[str]:
+    if is_spm_assessment(column):
+        return SPM_GRADE_ORDER
+    if is_pspm_assessment(column):
+        return PSPM_GRADE_ORDER
+    return GRADE_ORDER
+
+
 def grade_long_frame(records: pd.DataFrame, grade_columns: list[str]) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     for column in grade_columns:
@@ -2675,76 +2769,82 @@ def render_progress_section(
     axis_title: str,
     base_records: pd.DataFrame,
 ) -> None:
-    system_tabs = st.tabs(PROGRESS_SYSTEM_TABS)
-    for tab, (system_label, system_frame) in zip(system_tabs, split_system_frames(frame)):
-        with tab:
-            system_base = system_filtered_records(base_records, system_label)
-            render_progress_assessment_cards(system_base, system_frame, section_label, value_column, metric_label)
-            rank = ranked_metric(
-                system_frame,
+    selected_system = st.radio(
+        "Sistem",
+        PROGRESS_SYSTEM_TABS,
+        horizontal=True,
+        key=f"{group_column}_{section_label}_progress_system",
+    )
+    system_frames = dict(split_system_frames(frame))
+    system_label = selected_system
+    system_frame = system_frames.get(system_label, frame.iloc[0:0])
+    system_base = system_filtered_records(base_records, system_label)
+    render_progress_assessment_cards(system_base, system_frame, section_label, value_column, metric_label)
+    rank = ranked_metric(
+        system_frame,
+        group_column,
+        value_column,
+        metric_label,
+        system_base,
+        section_label,
+    )
+    filtered_record_mode = group_column in {"PENSYARAH", "KELAS", "PROGRAM"}
+    selected_groups: list[str] = []
+    left, right = st.columns([1.1, 1])
+    with left:
+        selected_groups.extend(
+            render_rank_chart(
+                rank,
                 group_column,
-                value_column,
+                f"{section_label} {system_label} Rank",
                 metric_label,
-                system_base,
-                section_label,
+                axis_title,
+                f"{group_column}_{section_label}_{system_label}_rank_chart",
+                enable_selection=True,
             )
-            filtered_record_mode = group_column in {"PENSYARAH", "KELAS", "PROGRAM"}
-            selected_groups: list[str] = []
-            left, right = st.columns([1.1, 1])
-            with left:
-                selected_groups.extend(
-                    render_rank_chart(
+        )
+    with right:
+        if rank.empty:
+            blank_state(f"No {section_label.lower()} records for {system_label}.")
+        else:
+            rank_title = f"{group_column} {section_label} {system_label} Rank"
+            render_table_download_menu(rank, safe_key(rank_title), rank_title)
+            try:
+                table_event = st.dataframe(
                     rank,
-                    group_column,
-                    f"{section_label} {system_label} Rank",
-                    metric_label,
-                    axis_title,
-                    f"{group_column}_{section_label}_{system_label}_rank_chart",
-                    enable_selection=True,
-                    )
+                    hide_index=True,
+                    use_container_width=True,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    key=f"{group_column}_{section_label}_{system_label}_rank_table",
                 )
-            with right:
-                if rank.empty:
-                    blank_state(f"No {section_label.lower()} records for {system_label}.")
-                else:
-                    rank_title = f"{group_column} {section_label} {system_label} Rank"
-                    render_table_download_menu(rank, safe_key(rank_title), rank_title)
-                    try:
-                        table_event = st.dataframe(
-                            rank,
-                            hide_index=True,
-                            use_container_width=True,
-                            on_select="rerun",
-                            selection_mode="single-row",
-                            key=f"{group_column}_{section_label}_{system_label}_rank_table",
-                        )
-                        for row_index in selected_dataframe_rows(table_event):
-                            if 0 <= row_index < len(rank):
-                                selected_groups.append(str(rank.iloc[row_index][group_column]))
-                    except TypeError:
-                        st.dataframe(rank, hide_index=True, use_container_width=True)
-            if not filtered_record_mode and selected_groups and group_column in system_frame.columns:
-                selected_set = {str(value) for value in selected_groups}
-                selected_frame = system_frame[system_frame[group_column].astype(str).isin(selected_set)]
-                render_selected_students(
-                    f"Selected Students: {', '.join(sorted(selected_set))}",
-                    selected_frame,
-                    section_label,
-                )
-            distribution_selected = render_progress_distribution(
-                system_frame,
-                group_column,
-                section_label,
-                system_label,
-                return_selection=filtered_record_mode,
-            )
-            if filtered_record_mode:
-                table_frame = system_base
-                if distribution_selected is not None and not distribution_selected.empty:
-                    table_frame = distribution_selected
-                elif selected_groups:
-                    table_frame = filter_records_by_groups(system_base, group_column, selected_groups)
-                render_progress_filtered_record_table(table_frame, section_label, system_label)
+                for row_index in selected_dataframe_rows(table_event):
+                    if 0 <= row_index < len(rank):
+                        selected_groups.append(str(rank.iloc[row_index][group_column]))
+            except TypeError:
+                st.dataframe(rank, hide_index=True, use_container_width=True)
+    if not filtered_record_mode and selected_groups and group_column in system_frame.columns:
+        selected_set = {str(value) for value in selected_groups}
+        selected_frame = system_frame[system_frame[group_column].astype(str).isin(selected_set)]
+        render_selected_students(
+            f"Selected Students: {', '.join(sorted(selected_set))}",
+            selected_frame,
+            section_label,
+        )
+    distribution_selected = render_progress_distribution(
+        system_frame,
+        group_column,
+        section_label,
+        system_label,
+        return_selection=filtered_record_mode,
+    )
+    if filtered_record_mode:
+        table_frame = system_base
+        if distribution_selected is not None and not distribution_selected.empty:
+            table_frame = distribution_selected
+        elif selected_groups:
+            table_frame = filter_records_by_groups(system_base, group_column, selected_groups)
+        render_progress_filtered_record_table(table_frame, section_label, system_label)
 
 
 def render_progress_assessment_cards(

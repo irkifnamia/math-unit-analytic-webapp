@@ -240,7 +240,7 @@ def inject_theme() -> None:
             border: 1px solid rgba(255, 255, 255, 0.14);
             border-left: 5px solid var(--app-red);
             border-radius: 8px;
-            padding: 0.82rem 1rem 0.88rem;
+            padding: 1rem 1.1rem 0.92rem;
             margin-bottom: 0;
             box-shadow: 0 14px 34px rgba(17, 20, 50, 0.22);
         }
@@ -262,6 +262,10 @@ def inject_theme() -> None:
             text-transform: uppercase;
             font-size: clamp(1.55rem, 2.4vw, 2.35rem);
             color: #ffffff;
+            display: flex;
+            align-items: center;
+            gap: 0.7rem;
+            flex-wrap: wrap;
         }
 
         .app-header p {
@@ -271,13 +275,14 @@ def inject_theme() -> None:
         .role-pill {
             display: inline-flex;
             align-items: center;
+            justify-content: center;
             border-radius: 999px;
             border: 1px solid rgba(255, 232, 26, 0.52);
             color: var(--app-yellow);
             font-size: 0.78rem;
             font-weight: 700;
             padding: 0.18rem 0.55rem;
-            margin-left: 0.35rem;
+            margin-left: 0;
             background: rgba(255, 232, 26, 0.1);
         }
 
@@ -317,7 +322,7 @@ def inject_theme() -> None:
             align-items: center;
             justify-content: center;
             flex-direction: column;
-            gap: 0.55rem;
+            gap: 0.5rem;
             padding: 0.35rem 0 0.85rem;
             text-align: center;
         }
@@ -331,9 +336,15 @@ def inject_theme() -> None:
         .kmk-app-brand-title {
             color: var(--app-ink);
             font-weight: 850;
-            font-size: 1.2rem;
+            font-size: 1.15rem;
             line-height: 1.08;
             text-transform: uppercase;
+            text-align: center;
+        }
+
+        .kmk-app-brand-title-line {
+            display: block;
+            white-space: nowrap;
         }
 
         .kmk-app-brand-caption {
@@ -437,7 +448,11 @@ def app_brand() -> None:
         f"""
         <div class="kmk-app-brand">
             {logo_markup}
-            <div class="kmk-app-brand-title">MATHEMATICS UNIT<br>ANALYTIC SITE<br>2026/2027</div>
+            <div class="kmk-app-brand-title">
+                <span class="kmk-app-brand-title-line">MATHEMATICS UNIT</span>
+                <span class="kmk-app-brand-title-line">ANALYTIC SITE</span>
+                <span class="kmk-app-brand-title-line">2026/2027</span>
+            </div>
             <div class="kmk-app-brand-caption">Kolej Matrikulasi Kedah</div>
         </div>
         """,

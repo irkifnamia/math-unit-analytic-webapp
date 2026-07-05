@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+import json
+from time import sleep
 from typing import Any
+from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
 
 import pandas as pd
 import streamlit as st
@@ -288,38 +292,45 @@ class SupabaseStore:
     def bulk_upsert_reference(self, key: str, df: pd.DataFrame, match_column: str | None = None) -> int:
         table_name, allowed_columns = self.reference_table_and_columns(key)
         match_column = match_column or natural_key_column(key)
-        saved = 0
+        rows: list[dict[str, Any]] = []
         for _, row in df.iterrows():
             raw = row.to_dict()
             payload = clean_payload(raw, allowed_columns, include_empty=True)
             if not payload:
                 continue
             write_payload = with_updated_at(payload, table_name)
-
             if match_column == "id":
                 record_id = normalize_supabase_id(raw.get("id"))
-                if is_empty_value(record_id):
-                    self.client.table(table_name).insert(write_payload).execute()
-                else:
-                    self.client.table(table_name).update(write_payload).eq("id", record_id).execute()
-                    verify_saved_payload(self.client, table_name, "id", record_id, payload)
+                if not is_empty_value(record_id):
+                    write_payload["id"] = record_id
             else:
                 match_value = raw.get(match_column)
                 if is_empty_value(match_value):
                     continue
-                response = (
-                    self.client.table(table_name)
-                    .select("id")
-                    .eq(match_column, match_value)
-                    .execute()
+                write_payload[match_column] = match_value
+            rows.append(write_payload)
+
+        if not rows:
+            return 0
+
+        if match_column != "id":
+            update_columns = [
+                column
+                for column in rows[0].keys()
+                if column not in {match_column, "updated_at"}
+            ]
+            if len(update_columns) == 1:
+                saved = bulk_update_single_column(
+                    self.client,
+                    table_name,
+                    rows,
+                    match_column,
+                    update_columns[0],
                 )
-                matches = response.data or []
-                if matches:
-                    self.client.table(table_name).update(write_payload).eq(match_column, match_value).execute()
-                    verify_saved_payload(self.client, table_name, match_column, match_value, payload)
-                else:
-                    self.client.table(table_name).insert(write_payload).execute()
-            saved += 1
+                clear_cached_reference_data()
+                return saved
+
+        saved = bulk_upsert_batches(self.client, table_name, rows, match_column)
         clear_cached_reference_data()
         return saved
 
@@ -683,6 +694,335 @@ def with_updated_at(payload: dict[str, Any], table_name: str) -> dict[str, Any]:
     stamped = payload.copy()
     stamped["updated_at"] = datetime.now(timezone.utc).isoformat()
     return stamped
+
+
+def bulk_upsert_batches(
+    client: Client,
+    table_name: str,
+    rows: list[dict[str, Any]],
+    match_column: str,
+) -> int:
+    saved = 0
+    batch_size = 20
+    for start in range(0, len(rows), batch_size):
+        saved += upsert_batch_adaptive(
+            client,
+            table_name,
+            rows[start : start + batch_size],
+            match_column,
+        )
+    return saved
+
+
+def bulk_update_single_column(
+    client: Client,
+    table_name: str,
+    rows: list[dict[str, Any]],
+    match_column: str,
+    update_column: str,
+) -> int:
+    rpc_saved = bulk_update_single_column_rpc(client, table_name, rows, match_column, update_column)
+    if rpc_saved is not None:
+        return rpc_saved
+    if len(rows) > 100:
+        raise RuntimeError(
+            "Large one-column bulk imports need the Supabase RPC setup. "
+            "Run supabase_bulk_update_reference_function.sql in Supabase SQL Editor once, then import again."
+        )
+
+    saved = 0
+    grouped: dict[Any, list[Any]] = {}
+    for row in rows:
+        match_value = row.get(match_column)
+        if is_empty_value(match_value):
+            continue
+        grouped.setdefault(row.get(update_column), []).append(match_value)
+
+    for update_value, match_values in grouped.items():
+        payload = with_updated_at({update_column: update_value}, table_name)
+        for start in range(0, len(match_values), 25):
+            chunk = match_values[start : start + 25]
+            execute_update_in_adaptive(client, table_name, payload, match_column, chunk)
+            saved += len(chunk)
+    return saved
+
+
+def bulk_update_single_column_rpc(
+    client: Client,
+    table_name: str,
+    rows: list[dict[str, Any]],
+    match_column: str,
+    update_column: str,
+) -> int | None:
+    rpc_rows = [
+        {
+            "match_value": row.get(match_column),
+            "update_value": row.get(update_column),
+        }
+        for row in rows
+        if not is_empty_value(row.get(match_column))
+    ]
+    if not rpc_rows:
+        return 0
+    saved = 0
+    try:
+        for start in range(0, len(rpc_rows), 100):
+            saved += execute_bulk_update_rpc_adaptive(
+                client,
+                table_name,
+                match_column,
+                update_column,
+                rpc_rows[start : start + 100],
+            )
+    except Exception as exc:
+        if is_missing_bulk_update_rpc(exc):
+            return None
+        raise
+    return saved
+
+
+def execute_bulk_update_rpc_adaptive(
+    client: Client,
+    table_name: str,
+    match_column: str,
+    update_column: str,
+    rpc_rows: list[dict[str, Any]],
+) -> int:
+    if not rpc_rows:
+        return 0
+    try:
+        return execute_bulk_update_rpc(client, table_name, match_column, update_column, rpc_rows)
+    except Exception as exc:
+        if len(rpc_rows) == 1 or not is_transient_disconnect(exc):
+            raise
+        midpoint = len(rpc_rows) // 2
+        sleep(0.5)
+        return execute_bulk_update_rpc_adaptive(
+            client,
+            table_name,
+            match_column,
+            update_column,
+            rpc_rows[:midpoint],
+        ) + execute_bulk_update_rpc_adaptive(
+            client,
+            table_name,
+            match_column,
+            update_column,
+            rpc_rows[midpoint:],
+        )
+
+
+def execute_bulk_update_rpc(
+    client: Client,
+    table_name: str,
+    match_column: str,
+    update_column: str,
+    rpc_rows: list[dict[str, Any]],
+) -> int:
+    response = client.rpc(
+        "bulk_update_reference",
+        {
+            "p_table": table_name,
+            "p_match_column": match_column,
+            "p_update_column": update_column,
+            "p_rows": rpc_rows,
+        },
+    ).execute()
+    try:
+        return int(response.data or 0)
+    except (TypeError, ValueError):
+        return len(rpc_rows)
+
+
+def is_missing_bulk_update_rpc(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "bulk_update_reference" in message
+        and (
+            "not found" in message
+            or "could not find" in message
+            or "schema cache" in message
+            or "pgrst202" in message
+        )
+    )
+
+
+def execute_update_in_adaptive(
+    client: Client,
+    table_name: str,
+    payload: dict[str, Any],
+    match_column: str,
+    match_values: list[Any],
+) -> None:
+    if not match_values:
+        return
+    try:
+        execute_update_in(client, table_name, payload, match_column, match_values)
+    except Exception as exc:
+        if len(match_values) == 1 or not is_transient_disconnect(exc):
+            raise
+        midpoint = len(match_values) // 2
+        sleep(0.5)
+        execute_update_in_adaptive(client, table_name, payload, match_column, match_values[:midpoint])
+        execute_update_in_adaptive(client, table_name, payload, match_column, match_values[midpoint:])
+
+
+def execute_update_in(
+    client: Client,
+    table_name: str,
+    payload: dict[str, Any],
+    match_column: str,
+    match_values: list[Any],
+) -> None:
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            rest_patch_update_in(table_name, payload, match_column, match_values)
+            return
+        except Exception as exc:
+            last_error = exc
+            if not is_transient_disconnect(exc) or attempt == 2:
+                raise
+            sleep(0.75 * (attempt + 1))
+    if last_error:
+        raise last_error
+
+
+def upsert_batch_adaptive(
+    client: Client,
+    table_name: str,
+    batch: list[dict[str, Any]],
+    match_column: str,
+) -> int:
+    if not batch:
+        return 0
+    try:
+        execute_upsert_batch(client, table_name, batch, match_column)
+        return len(batch)
+    except Exception as exc:
+        if needs_unique_constraint(exc):
+            raise RuntimeError(
+                f"Bulk import needs a unique constraint on {table_name}.{match_column}. "
+                f"Add the constraint in Supabase or choose id as the match column. Original error: {exc}"
+            ) from exc
+        if len(batch) == 1 or not is_transient_disconnect(exc):
+            raise
+        midpoint = len(batch) // 2
+        sleep(0.5)
+        return upsert_batch_adaptive(client, table_name, batch[:midpoint], match_column) + upsert_batch_adaptive(
+            client,
+            table_name,
+            batch[midpoint:],
+            match_column,
+        )
+
+
+def execute_upsert_batch(
+    client: Client,
+    table_name: str,
+    batch: list[dict[str, Any]],
+    match_column: str,
+) -> None:
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            upsert_query = supabase_upsert_minimal(client, table_name, batch, match_column)
+            upsert_query.execute()
+            return
+        except Exception as exc:
+            last_error = exc
+            if not is_transient_disconnect(exc) or attempt == 2:
+                raise
+            sleep(0.75 * (attempt + 1))
+    if last_error:
+        raise last_error
+
+
+def is_transient_disconnect(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(
+        pattern in message
+        for pattern in [
+            "server disconnected",
+            "connection",
+            "timeout",
+            "temporarily unavailable",
+            "remote protocol error",
+        ]
+    )
+
+
+def supabase_update_minimal(client: Client, table_name: str, payload: dict[str, Any]):
+    try:
+        return client.table(table_name).update(payload, returning="minimal")
+    except TypeError:
+        return client.table(table_name).update(payload)
+
+
+def supabase_rest_config() -> tuple[str, str]:
+    url = st.secrets.get("SUPABASE_URL")
+    key = st.secrets.get("SUPABASE_KEY")
+    if not url or not key:
+        raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be configured in st.secrets.")
+    return str(url).rstrip("/"), str(key)
+
+
+def rest_patch_update_in(
+    table_name: str,
+    payload: dict[str, Any],
+    match_column: str,
+    match_values: list[Any],
+) -> None:
+    url, key = supabase_rest_config()
+    value_filter = ",".join(postgrest_value(value) for value in match_values)
+    query = urlencode({match_column: f"in.({value_filter})"})
+    endpoint = f"{url}/rest/v1/{quote(table_name, safe='')}?{query}"
+    body = json.dumps(payload, default=str).encode("utf-8")
+    request = Request(
+        endpoint,
+        data=body,
+        method="PATCH",
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        },
+    )
+    with urlopen(request, timeout=20) as response:
+        if response.status >= 400:
+            raise RuntimeError(f"Supabase update failed with status {response.status}.")
+
+
+def postgrest_value(value: Any) -> str:
+    text = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
+def supabase_upsert_minimal(
+    client: Client,
+    table_name: str,
+    batch: list[dict[str, Any]],
+    match_column: str,
+):
+    try:
+        return client.table(table_name).upsert(
+            batch,
+            on_conflict=match_column,
+            returning="minimal",
+            default_to_null=False,
+        )
+    except TypeError:
+        return client.table(table_name).upsert(
+            batch,
+            on_conflict=match_column,
+            default_to_null=False,
+        )
+
+
+def needs_unique_constraint(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "unique" in message or "constraint" in message or "42p10" in message
 
 
 def normalize_supabase_id(value: Any) -> Any:

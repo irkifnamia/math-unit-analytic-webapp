@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from html import escape
 from io import BytesIO
 from zoneinfo import ZoneInfo
 
@@ -121,7 +122,7 @@ DUMMY_IC_USERS = {
 
 
 st.set_page_config(
-    page_title="MATHEMATICS UNIT ANALYTIC",
+    page_title="MATHEMATICS UNIT ANALYTIC SITE 2026/2027",
     page_icon="M",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -283,13 +284,14 @@ def sidebar_navigation(
 
     all_pages = [
         "DEMOGRAPHY",
+        "PROFILING",
+        "DETAILED INFO",
         "SPM ANALYSIS",
         "PSPM ANALYSIS",
         "DIAGNOSTIC ANALYSIS",
         "LECTURER PROGRESS",
         "CLASS PROGRESS",
         "PROGRAM PROGRESS",
-        "DOWNLOAD",
         "DATA MANAGEMENT",
         "ADMIN",
     ]
@@ -468,14 +470,6 @@ def demography_dashboard(records: pd.DataFrame, user: dict) -> None:
         fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20))
         st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("Filtered Records")
-    render_data_table(
-        records[["NO MATRIK", "NAMA PELAJAR", "JURUSAN", "SISTEM", "KELAS", "SUBJEK", "PROGRAM", "PENSYARAH"]],
-        "demography_filtered_records",
-        "Filtered Demography Records",
-    )
-
-
 def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
     page_header(
         "SPM ANALYSIS",
@@ -572,23 +566,6 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
     else:
         blank_state("Select both SPM_MATH and SPM_ADDMATH in Ujian to view the grade matrix.")
 
-    st.subheader("Filtered SPM Records")
-    render_data_table(
-        spm_records[
-            [
-                "NO MATRIK",
-                "NAMA PELAJAR",
-                "KELAS",
-                "SUBJEK",
-                "PENSYARAH",
-                *selected_spm_columns,
-            ]
-        ],
-        "filtered_spm_records",
-        "Filtered SPM Records",
-    )
-
-
 def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
     page_header(
         "PSPM ANALYSIS",
@@ -642,24 +619,6 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
         st.subheader("PSPM SEM1 vs PSPM SEM2 Matrix")
         render_grade_matrix_heatmap(pspm_records, "PSPM_SEM1", "PSPM_SEM2")
 
-    st.subheader("Filtered PSPM Records")
-    display_cols = [
-        "NO MATRIK",
-        "NAMA PELAJAR",
-        "KELAS",
-        "PENSYARAH",
-        "JURUSAN",
-        "PROGRAM",
-        "SISTEM",
-        *pspm_columns,
-    ]
-    render_data_table(
-        pspm_records[[col for col in display_cols if col in pspm_records.columns]],
-        "filtered_pspm_records",
-        "Filtered PSPM Records",
-    )
-
-
 def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
     page_header(
         "DIAGNOSTIC ANALYSIS",
@@ -674,14 +633,6 @@ def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, l
     if diagnostic_long.empty:
         blank_state("No AMAT diagnostic data match the selected filters.")
         return
-
-    latest_test = diagnostic_columns[-1]
-    kpis = st.columns(4)
-    kpis[0].metric("Students", f"{diagnostic_long['NO MATRIK'].nunique():,}")
-    kpis[1].metric("Average AMAT", f"{diagnostic_long['Score'].mean():.1f}")
-    kpis[2].metric("Highest Score", f"{diagnostic_long['Score'].max():.0f}")
-    latest_scores = pd.to_numeric(records.get(latest_test, pd.Series(dtype=float)), errors="coerce")
-    kpis[3].metric(f"{latest_test} Average", f"{latest_scores.mean():.1f}")
 
     left, right = st.columns(2)
     with left:
@@ -748,23 +699,6 @@ def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, l
         fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20))
         st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("Diagnostic Records")
-    display_cols = [
-        "NO MATRIK",
-        "NAMA PELAJAR",
-        "KELAS",
-        "PENSYARAH",
-        "JURUSAN",
-        "PROGRAM",
-        *diagnostic_columns,
-    ]
-    render_data_table(
-        records[[col for col in display_cols if col in records.columns]],
-        "diagnostic_records",
-        "Diagnostic Records",
-    )
-
-
 def lecturer_progress_page(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
     page_header(
         "LECTURER PROGRESS",
@@ -791,6 +725,293 @@ def program_progress_page(records: pd.DataFrame, user: dict, filters: dict[str, 
     )
     records = strip_jurusan_from_program(records)
     progress_rank_page(records, filters, "PROGRAM", "Program")
+
+
+def profiling_page(records: pd.DataFrame, user: dict) -> None:
+    page_header(
+        "PROFILING",
+        "Profile student, class, and lecturer academic progress.",
+        user["role"],
+    )
+    if records.empty:
+        blank_state("No records match the selected filters. Use Clear filters or Refresh Supabase data in the sidebar.")
+        return
+
+    student_tab, class_tab, lecturer_tab = st.tabs(["Student", "Class", "Lecturer"])
+    with student_tab:
+        student_profile_section(records)
+    with class_tab:
+        class_profile_section(records)
+    with lecturer_tab:
+        lecturer_profile_section(records)
+
+
+def student_profile_section(records: pd.DataFrame) -> None:
+    students = records.drop_duplicates("NO MATRIK").copy()
+    options = {
+        f"{row.get('NO MATRIK', '')} | {row.get('NAMA PELAJAR', '')}": row.get("NO MATRIK")
+        for _, row in students.sort_values("NAMA PELAJAR", na_position="last").iterrows()
+    }
+    if not options:
+        blank_state("No students available.")
+        return
+    selected = st.selectbox("Student", list(options.keys()), key="profile_student")
+    student_records = records[records["NO MATRIK"].astype(str) == str(options[selected])]
+    if student_records.empty:
+        blank_state("No profile data available for this student.")
+        return
+    student = student_records.iloc[0]
+    profile_info_cards(
+        {
+            "Subject": field_value(student, "SUBJEK"),
+            "Jurusan": field_value(student, "JURUSAN"),
+            "Sistem": field_value(student, "SISTEM"),
+            "Pensyarah": field_value(student, "PENSYARAH"),
+            "Program": field_value(student, "PROGRAM"),
+        }
+    )
+    render_profile_spm_cards(student_records, average=False)
+    render_profile_pspm_grade_cards(student_records)
+    render_profile_pspm_dm_progress(student_records, "PSPM DM015 vs PSPM DM025 CGPA")
+    render_profile_pspm_sem_progress(student_records, "PSPM SEM1 vs PSPM SEM2 CGPA")
+    render_profile_diagnostic_progress(
+        student_records,
+        diagnostic_columns_from_records(student_records),
+        "Diagnostic Mark Progress",
+    )
+
+
+def class_profile_section(records: pd.DataFrame) -> None:
+    classes = sorted(value for value in records.get("KELAS", pd.Series(dtype=str)).dropna().unique().tolist() if value)
+    if not classes:
+        blank_state("No classes available.")
+        return
+    selected_class = st.selectbox("Class", classes, key="profile_class")
+    class_records = records[records["KELAS"] == selected_class]
+    first = class_records.iloc[0]
+    profile_info_cards(
+        {
+            "Subject": field_value(first, "SUBJEK"),
+            "Jurusan": ", ".join(sorted(class_records["JURUSAN"].dropna().astype(str).unique())) if "JURUSAN" in class_records else "",
+            "Sistem": ", ".join(sorted(class_records["SISTEM"].dropna().astype(str).unique())) if "SISTEM" in class_records else "",
+            "Pensyarah": field_value(first, "PENSYARAH"),
+        }
+    )
+    render_profile_students(
+        class_records,
+        "Class Students",
+        ["NO MATRIK", "NAMA PELAJAR", "PROGRAM", *grade_assessment_columns_from_records(class_records)],
+    )
+    render_profile_spm_cards(class_records, average=True)
+    render_profile_pspm_all_cards(class_records)
+    render_profile_pspm_dm_progress(class_records, "Average CGPA: PSPM DM015 vs PSPM DM025")
+    render_profile_pspm_sem_progress(class_records, "Average CGPA: PSPM SEM1 vs PSPM SEM2")
+    render_profile_diagnostic_progress(
+        class_records,
+        diagnostic_columns_from_records(class_records),
+        "Average Diagnostic Mark Progress",
+    )
+
+
+def lecturer_profile_section(records: pd.DataFrame) -> None:
+    lecturers = sorted(
+        {
+            name
+            for value in records.get("PENSYARAH", pd.Series(dtype=str)).dropna()
+            for name in split_people(value)
+        }
+    )
+    if not lecturers:
+        blank_state("No lecturers available.")
+        return
+    selected_lecturer = st.selectbox("Lecturer", lecturers, key="profile_lecturer")
+    lecturer_records = records[
+        records["PENSYARAH"].apply(lambda value: selected_lecturer in split_people(value))
+    ]
+    classes = sorted(lecturer_records.get("KELAS", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
+    profile_info_cards(
+        {
+            "Classes": f"{len(classes):,}",
+            "Students": f"{lecturer_records['NO MATRIK'].nunique():,}" if "NO MATRIK" in lecturer_records else "0",
+        }
+    )
+    st.markdown("**Class List**")
+    render_data_table(pd.DataFrame({"KELAS": classes}), f"profile_{safe_key(selected_lecturer)}_classes", "Lecturer Classes")
+    render_profile_students(
+        lecturer_records,
+        "Lecturer Students",
+        ["NO MATRIK", "NAMA PELAJAR", "KELAS", "SISTEM", "PROGRAM", *grade_assessment_columns_from_records(lecturer_records)],
+    )
+    render_profile_spm_cards(lecturer_records, average=True)
+    render_profile_pspm_dm_cards(lecturer_records)
+    render_profile_pspm_sem_cards(lecturer_records)
+    render_profile_pspm_sem_progress(lecturer_records, "Average CGPA: PSPM SEM1 vs PSPM SEM2")
+    render_profile_diagnostic_progress(
+        lecturer_records,
+        diagnostic_columns_from_records(lecturer_records),
+        "Average Diagnostic Mark Progress",
+    )
+
+
+def profile_info_cards(items: dict[str, str]) -> None:
+    columns = st.columns(max(1, min(len(items), 5)))
+    for index, (label, value) in enumerate(items.items()):
+        with columns[index % len(columns)]:
+            profile_card(label, value or "-")
+
+
+def profile_card(label: str, value: object) -> None:
+    with st.container(border=True):
+        st.markdown(
+            f"""
+            <div class="profile-card-content">
+                <div class="profile-card-label">{escape(str(label))}</div>
+                <div class="profile-card-value">{escape(str(value))}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def render_profile_spm_cards(records: pd.DataFrame, average: bool) -> None:
+    cards: dict[str, str] = {}
+    for column in ["SPM_MATH", "SPM_ADDMATH"]:
+        if column not in records:
+            continue
+        label = f"{column} {'Average CGPA' if average else 'Grade'}"
+        if average:
+            cards[label] = format_average_cgpa(records, column)
+        else:
+            cards[label] = first_nonempty_value(records[column])
+    if cards:
+        profile_info_cards(cards)
+
+
+def render_profile_pspm_dm_cards(records: pd.DataFrame) -> None:
+    cards = {
+        column: format_average_cgpa(records, column)
+        for column in ["PSPM_DM015", "PSPM_DM025"]
+        if column in records
+    }
+    if cards:
+        profile_info_cards(cards)
+
+
+def render_profile_pspm_sem_cards(records: pd.DataFrame) -> None:
+    cards = {
+        f"{column} Average CGPA": format_average_cgpa(records, column)
+        for column in ["PSPM_SEM1", "PSPM_SEM2"]
+        if column in records
+    }
+    if cards:
+        profile_info_cards(cards)
+
+
+def render_profile_pspm_all_cards(records: pd.DataFrame) -> None:
+    cards = {
+        f"{column} Average CGPA": format_average_cgpa(records, column)
+        for column in ["PSPM_DM015", "PSPM_DM025", "PSPM_SEM1", "PSPM_SEM2"]
+        if column in records
+    }
+    if cards:
+        profile_info_cards(cards)
+
+
+def render_profile_pspm_grade_cards(records: pd.DataFrame) -> None:
+    cards = {
+        f"{column} Grade": first_nonempty_value(records[column])
+        for column in ["PSPM_DM015", "PSPM_DM025", "PSPM_SEM1", "PSPM_SEM2"]
+        if column in records
+    }
+    if cards:
+        profile_info_cards(cards)
+
+
+def render_profile_pspm_dm_progress(records: pd.DataFrame, title: str) -> None:
+    render_profile_cgpa_progress(
+        records,
+        [column for column in ["PSPM_DM015", "PSPM_DM025"] if column in records],
+        title,
+    )
+
+
+def render_profile_pspm_sem_progress(records: pd.DataFrame, title: str) -> None:
+    render_profile_cgpa_progress(
+        records,
+        [column for column in ["PSPM_SEM1", "PSPM_SEM2"] if column in records],
+        title,
+    )
+
+
+def first_nonempty_value(values: pd.Series) -> str:
+    clean = values.replace({None: pd.NA}).astype("string").str.strip()
+    clean = clean[clean.notna() & (clean != "")]
+    if clean.empty:
+        return "-"
+    return str(clean.iloc[0])
+
+
+def render_profile_students(records: pd.DataFrame, title: str, columns: list[str] | None = None) -> None:
+    columns = columns or [
+        "NO MATRIK",
+        "NAMA PELAJAR",
+        "KELAS",
+        "JURUSAN",
+        "SISTEM",
+        "PENSYARAH",
+        "PROGRAM",
+    ]
+    table = records[[column for column in columns if column in records.columns]].drop_duplicates()
+    render_data_table(table, safe_key(title), title)
+
+
+def render_profile_progress(records: pd.DataFrame, title: str) -> None:
+    cgpa_columns = [*spm_columns_from_records(records), *pspm_columns_from_records(records)]
+    diagnostic_columns = diagnostic_columns_from_records(records)
+    left, right = st.columns(2)
+    with left:
+        render_profile_cgpa_progress(records, cgpa_columns, f"{title}: SPM and PSPM CGPA")
+    with right:
+        render_profile_diagnostic_progress(records, diagnostic_columns, f"{title}: Diagnostic Marks")
+
+
+def render_profile_cgpa_progress(records: pd.DataFrame, columns: list[str], title: str) -> None:
+    progress = average_cgpa_frame(records, columns).dropna(subset=["Average CGPA"])
+    if progress.empty:
+        blank_state(f"No CGPA data available for {title}.")
+        return
+    fig = px.line(
+        progress,
+        x="Assessment",
+        y="Average CGPA",
+        markers=True,
+        text="Average CGPA",
+        title=title,
+        color_discrete_sequence=["#28277f"],
+    )
+    fig.update_traces(texttemplate="%{text:.2f}", textposition="top center")
+    fig.update_layout(height=360, yaxis_range=[0, 4], margin=dict(l=20, r=20, t=55, b=20))
+    st.plotly_chart(fig, use_container_width=True, key=f"profile_cgpa_{safe_key(title)}_{id(records)}")
+
+
+def render_profile_diagnostic_progress(records: pd.DataFrame, columns: list[str], title: str) -> None:
+    progress = assessment_long_frame(records, columns)
+    if progress.empty:
+        blank_state(f"No diagnostic data available for {title}.")
+        return
+    summary = progress.groupby("Test", as_index=False)["Score"].mean()
+    fig = px.line(
+        summary,
+        x="Test",
+        y="Score",
+        markers=True,
+        text="Score",
+        title=title,
+        color_discrete_sequence=["#0f766e"],
+    )
+    fig.update_traces(texttemplate="%{text:.1f}", textposition="top center")
+    fig.update_layout(height=360, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=55, b=20))
+    st.plotly_chart(fig, use_container_width=True, key=f"profile_diagnostic_{safe_key(title)}_{id(records)}")
 
 
 def comparable_program_label(value: object) -> str:
@@ -852,7 +1073,7 @@ def progress_rank_page(records: pd.DataFrame, filters: dict[str, list[str]], gro
 
 def download_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> None:
     page_header(
-        "DOWNLOAD",
+        "DETAILED INFO",
         "Choose fields, filter rows, and export the selected dataset.",
         user["role"],
     )
@@ -1211,39 +1432,26 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
                     if errors:
                         st.error("Please fix the validation errors before saving.")
                         st.write(errors)
-                    elif st.button("Save imported data", type="primary", key=f"save_import_{dataset_key}"):
-                        if preview.empty:
-                            st.error("No rows found in the uploaded file.")
-                            return
-                        try:
-                            saved = store.bulk_upsert_reference(dataset_key, preview, match_column=match_column)
-                            if saved <= 0:
-                                st.error("No rows were saved. Check that the uploaded file contains valid matching rows.")
-                                return
-                            history_logged = store.log_edit_history(
+                    else:
+                        st.info(f"{len(preview):,} row(s) ready to save into Supabase.")
+                        with st.form(f"bulk_import_save_form_{dataset_key}", clear_on_submit=False):
+                            submitted_import = st.form_submit_button(
+                                "Save imported data to Supabase",
+                                type="primary",
+                                use_container_width=True,
+                            )
+                        if submitted_import:
+                            saved_import = save_bulk_import(
+                                store,
                                 user,
-                                "BULK IMPORT",
                                 dataset_key,
-                                details=(
-                                    f"Saved {saved} {dataset_label.lower()} record(s). "
-                                    f"Match column: {match_column}. Updated columns: {', '.join(selected_update_columns)}."
-                                ),
+                                dataset_label,
+                                preview,
+                                match_column,
+                                selected_update_columns,
                             )
-                            success_message = (
-                                f"Bulk import successful. {saved} {dataset_label.lower()} record(s) saved. "
-                                f"Matching rows were overwritten by {match_column}; blank imported cells cleared existing values."
-                            )
-                            set_data_management_success(success_message)
-                            st.success(success_message)
-                            try:
-                                st.toast(success_message)
-                            except Exception:
-                                pass
-                            if not history_logged:
-                                set_data_management_warning("The import was saved, but edit history was not recorded because the edit_history table is unavailable.")
-                            store.refresh_cache()
-                        except Exception as exc:
-                            st.error(f"Bulk import failed: {exc}")
+                            if saved_import:
+                                st.rerun()
 
     with tab_refs:
         st.subheader(f"{dataset_label} Reference Data")
@@ -1267,6 +1475,48 @@ def dataset_frame(dataset_key: str, refs: dict[str, pd.DataFrame]) -> pd.DataFra
         ]
         return df[[column for column in ordered if column in df.columns]]
     return df
+
+
+def save_bulk_import(
+    store: SupabaseStore,
+    user: dict,
+    dataset_key: str,
+    dataset_label: str,
+    preview: pd.DataFrame,
+    match_column: str,
+    selected_update_columns: list[str],
+) -> bool:
+    if preview.empty:
+        st.error("No rows found in the uploaded file.")
+        return False
+    try:
+        saved = store.bulk_upsert_reference(dataset_key, preview, match_column=match_column)
+        if saved <= 0:
+            st.error("No rows were saved. Check that the uploaded file contains valid matching rows.")
+            return False
+        history_logged = store.log_edit_history(
+            user,
+            "BULK IMPORT",
+            dataset_key,
+            details=(
+                f"Saved {saved} {dataset_label.lower()} record(s). "
+                f"Match column: {match_column}. Updated columns: {', '.join(selected_update_columns)}."
+            ),
+        )
+        success_message = (
+            f"Bulk import successful. {saved} {dataset_label.lower()} record(s) saved. "
+            f"Matching rows were overwritten by {match_column}; blank imported cells cleared existing values."
+        )
+        set_data_management_success(success_message)
+        if not history_logged:
+            set_data_management_warning(
+                "The import was saved, but edit history was not recorded because the edit_history table is unavailable."
+            )
+        store.refresh_cache()
+        return True
+    except Exception as exc:
+        st.error(f"Bulk import failed: {exc}")
+        return False
 
 
 def dataset_search_placeholder(dataset_key: str) -> str:
@@ -1783,6 +2033,14 @@ def pspm_columns_from_records(records: pd.DataFrame) -> list[str]:
 
 def diagnostic_columns_from_records(records: pd.DataFrame) -> list[str]:
     return [column for column in assessment_columns_from_records(records) if is_diagnostic_assessment(column)]
+
+
+def grade_assessment_columns_from_records(records: pd.DataFrame) -> list[str]:
+    return [
+        column
+        for column in assessment_columns_from_records(records)
+        if is_spm_assessment(column) or is_pspm_assessment(column)
+    ]
 
 
 def grade_long_frame(records: pd.DataFrame, grade_columns: list[str]) -> pd.DataFrame:
@@ -2810,7 +3068,8 @@ def main() -> None:
         "LECTURER PROGRESS",
         "CLASS PROGRESS",
         "PROGRAM PROGRESS",
-        "DOWNLOAD",
+        "PROFILING",
+        "DETAILED INFO",
     ]:
         base_records = store.fetch_base_records(user, results_mode="all")
     elif page in ["DATA MANAGEMENT"]:
@@ -2832,7 +3091,9 @@ def main() -> None:
         class_progress_page(records, user, filters)
     elif page == "PROGRAM PROGRESS":
         program_progress_page(records, user, filters)
-    elif page == "DOWNLOAD":
+    elif page == "PROFILING":
+        profiling_page(records, user)
+    elif page == "DETAILED INFO":
         download_page(records, user, store)
     elif page == "ADMIN":
         admin_page(user, store)

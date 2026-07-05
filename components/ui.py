@@ -265,9 +265,7 @@ def inject_theme() -> None:
         }
 
         .app-header p {
-            color: rgba(255, 255, 255, 0.78);
-            font-size: 0.96rem;
-            margin: 0.48rem 0 0;
+            display: none;
         }
 
         .role-pill {
@@ -392,6 +390,28 @@ def inject_theme() -> None:
             text-align: center;
             text-transform: uppercase;
         }
+
+        .profile-card-label {
+            color: var(--app-muted);
+            font-size: 0.74rem;
+            line-height: 1.15;
+            font-weight: 800;
+            text-transform: uppercase;
+            margin-bottom: 0.42rem;
+        }
+
+        .profile-card-value {
+            color: var(--app-ink);
+            font-size: clamp(0.95rem, 1.1vw, 1.18rem);
+            line-height: 1.22;
+            font-weight: 800;
+            white-space: normal;
+        }
+
+        .profile-card-content {
+            min-height: 66px;
+            overflow-wrap: anywhere;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -404,7 +424,6 @@ def page_header(title: str, caption: str, role: str | None = None) -> None:
         f"""
         <div class="app-header">
             <h1>{title.upper()} {role_markup}</h1>
-            <p>{caption}</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -418,7 +437,7 @@ def app_brand() -> None:
         f"""
         <div class="kmk-app-brand">
             {logo_markup}
-            <div class="kmk-app-brand-title">MATHEMATICS UNIT ANALYTIC</div>
+            <div class="kmk-app-brand-title">MATHEMATICS UNIT<br>ANALYTIC SITE<br>2026/2027</div>
             <div class="kmk-app-brand-caption">Kolej Matrikulasi Kedah</div>
         </div>
         """,

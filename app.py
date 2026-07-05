@@ -855,11 +855,13 @@ def student_profile_section(records: pd.DataFrame) -> None:
     profile_info_cards(
         {
             "Subject": field_value(student, "SUBJEK"),
-            "Jurusan": field_value(student, "JURUSAN"),
-            "Sistem": field_value(student, "SISTEM"),
+            "Kelas": field_value(student, "KELAS"),
             "Pensyarah": field_value(student, "PENSYARAH"),
+            "Sistem": field_value(student, "SISTEM"),
+            "Jurusan": field_value(student, "JURUSAN"),
             "Program": field_value(student, "PROGRAM"),
-        }
+        },
+        columns_per_row=3,
     )
     render_profile_spm_cards(student_records, average=False)
     render_profile_pspm_grade_cards(student_records)
@@ -946,8 +948,8 @@ def lecturer_profile_section(records: pd.DataFrame) -> None:
     )
 
 
-def profile_info_cards(items: dict[str, str]) -> None:
-    columns = st.columns(max(1, min(len(items), 5)))
+def profile_info_cards(items: dict[str, str], columns_per_row: int = 5) -> None:
+    columns = st.columns(max(1, min(len(items), columns_per_row)))
     for index, (label, value) in enumerate(items.items()):
         with columns[index % len(columns)]:
             profile_card(label, value or "-")

@@ -625,6 +625,20 @@ def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, l
         "Track AMAT diagnostic progress across cohorts, classes, and lecturers.",
         user["role"],
     )
+    sm_tab, am_tab, dm_tab = st.tabs(["SM", "AM", "DM"])
+    with sm_tab:
+        sm_records = subject_filtered_records(records, "SM")
+        render_sm_diagnostic_analysis(sm_records, filters)
+    with am_tab:
+        blank_state("AM diagnostic analysis will be added later.")
+    with dm_tab:
+        blank_state("DM diagnostic analysis will be added later.")
+
+
+def render_sm_diagnostic_analysis(records: pd.DataFrame, filters: dict[str, list[str]]) -> None:
+    if records.empty:
+        blank_state("No SM records match the selected filters.")
+        return
     diagnostic_columns = selected_ujian_columns(filters, diagnostic_columns_from_records(records))
     if not diagnostic_columns:
         blank_state("The selected Ujian filter does not include any AMAT diagnostic tests.")
@@ -698,6 +712,14 @@ def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, l
         )
         fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20))
         st.plotly_chart(fig, use_container_width=True)
+
+
+def subject_filtered_records(records: pd.DataFrame, subject_code: str) -> pd.DataFrame:
+    if records.empty or "SUBJEK" not in records:
+        return records.iloc[0:0].copy()
+    normalized = records["SUBJEK"].fillna("").astype(str).str.upper().str.strip()
+    return records[normalized == subject_code.upper()].copy()
+
 
 def lecturer_progress_page(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
     page_header(
@@ -980,17 +1002,22 @@ def render_profile_cgpa_progress(records: pd.DataFrame, columns: list[str], titl
     if progress.empty:
         blank_state(f"No CGPA data available for {title}.")
         return
-    fig = px.line(
+    fig = px.bar(
         progress,
         x="Assessment",
         y="Average CGPA",
-        markers=True,
         text="Average CGPA",
         title=title,
-        color_discrete_sequence=["#28277f"],
+        color="Assessment",
+        color_discrete_sequence=["#28277f", "#0f766e", "#facc15", "#ef1c2a"],
     )
-    fig.update_traces(texttemplate="%{text:.2f}", textposition="top center")
-    fig.update_layout(height=360, yaxis_range=[0, 4], margin=dict(l=20, r=20, t=55, b=20))
+    fig.update_traces(texttemplate="%{text:.2f}", textposition="outside")
+    fig.update_layout(
+        height=360,
+        yaxis_range=[0, 4],
+        margin=dict(l=20, r=20, t=55, b=20),
+        showlegend=False,
+    )
     st.plotly_chart(fig, use_container_width=True, key=f"profile_cgpa_{safe_key(title)}_{id(records)}")
 
 

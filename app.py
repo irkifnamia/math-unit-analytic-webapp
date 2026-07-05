@@ -443,8 +443,8 @@ def demography_dashboard(records: pd.DataFrame, user: dict) -> None:
         fig.update_layout(height=390, margin=dict(l=20, r=20, t=55, b=20))
         st.plotly_chart(fig, use_container_width=True)
 
-    left, right = st.columns(2)
-    with left:
+    subject_col, sistem_col, lecturer_col = st.columns(3)
+    with subject_col:
         subject_counts = records["SUBJEK"].value_counts().reset_index()
         subject_counts.columns = ["Subjek", "Records"]
         fig = px.bar(
@@ -457,14 +457,28 @@ def demography_dashboard(records: pd.DataFrame, user: dict) -> None:
         fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20))
         st.plotly_chart(fig, use_container_width=True)
 
-    with right:
+    with sistem_col:
+        sistem_counts = records.drop_duplicates("NO MATRIK")["SISTEM"].value_counts().reset_index()
+        sistem_counts.columns = ["Sistem", "Students"]
+        fig = px.bar(
+            sistem_counts,
+            x="Sistem",
+            y="Students",
+            title="Distribution by Sistem",
+            color="Sistem",
+            color_discrete_sequence=["#28277f", "#0f766e", "#ef1c2a", "#facc15"],
+        )
+        fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20), showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with lecturer_col:
         lecturer_counts = lecturer_count_frame(records)
         fig = px.bar(
             lecturer_counts,
             x="Records",
             y="Pensyarah",
             orientation="h",
-            title="Counts by Lecturer",
+            title="Distribution by Lecturer",
             color_discrete_sequence=["#0f766e"],
         )
         fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20))
@@ -514,7 +528,7 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
             y="COUNT",
             color="RESULT",
             barmode="group",
-            title="SPM Grade Distribution",
+            title="Grade Distribution",
             category_orders={"GRADE": GRADE_ORDER},
             color_discrete_sequence=["#1d4ed8", "#0f766e"],
         )
@@ -529,7 +543,7 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
             y="Count",
             color="Status",
             text="Label",
-            title="SPM ADDMATH Participation",
+            title="ADDMATH Participation",
             color_discrete_map={"Taken": "#0f766e", "Not Taken": "#b45309"},
             custom_data=["Percent"],
         )
@@ -557,10 +571,10 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
     render_average_cgpa_comparison(
         spm_records,
         ["SPM_MATH", "SPM_ADDMATH"],
-        "Average CGPA Comparison: SPM MATH vs SPM ADDMATH",
+        "MATH vs ADDMATH (CGPA)",
     )
 
-    st.subheader("SPM ADDMATH vs SPM MATH Grade Matrix")
+    st.subheader("MATH vs ADDMATH (GRADE)")
     if {"SPM_MATH", "SPM_ADDMATH"}.issubset(selected_spm_columns):
         render_grade_matrix_heatmap(spm_records, "SPM_ADDMATH", "SPM_MATH")
     else:
@@ -593,30 +607,30 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
 
     left, right = st.columns(2)
     with left:
-        render_grade_proportion_chart(pspm_records, ["PSPM_DM015", "PSPM_DM025"], "PSPM DM015 vs PSPM DM025 Grade Proportion")
+        render_grade_proportion_chart(pspm_records, ["PSPM_DM015", "PSPM_DM025"], "PSPM DM015 vs PSPM DM025 (Grade Proportion)")
     with right:
-        render_grade_proportion_chart(pspm_records, ["PSPM_SEM1", "PSPM_SEM2"], "PSPM SEM1 vs PSPM SEM2 Grade Proportion")
+        render_grade_proportion_chart(pspm_records, ["PSPM_SEM1", "PSPM_SEM2"], "PSPM SEM1 vs PSPM SEM2 (Grade Proportion)")
 
     left, right = st.columns(2)
     with left:
         render_average_cgpa_comparison(
             pspm_records,
             ["PSPM_DM015", "PSPM_DM025"],
-            "Average CGPA: PSPM DM015 vs PSPM DM025",
+            "PSPM DM015 vs PSPM DM025 (CGPA)",
         )
     with right:
         render_average_cgpa_comparison(
             pspm_records,
             ["PSPM_SEM1", "PSPM_SEM2"],
-            "Average CGPA: PSPM SEM1 vs PSPM SEM2",
+            "PSPM SEM1 vs PSPM SEM2 (CGPA)",
         )
 
     left, right = st.columns(2)
     with left:
-        st.subheader("PSPM DM015 vs PSPM DM025 Matrix")
+        st.subheader("PSPM DM015 vs PSPM DM025 (Grade)")
         render_grade_matrix_heatmap(pspm_records, "PSPM_DM015", "PSPM_DM025")
     with right:
-        st.subheader("PSPM SEM1 vs PSPM SEM2 Matrix")
+        st.subheader("PSPM SEM1 vs PSPM SEM2 (Grade)")
         render_grade_matrix_heatmap(pspm_records, "PSPM_SEM1", "PSPM_SEM2")
 
 def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
@@ -651,16 +665,18 @@ def render_sm_diagnostic_analysis(records: pd.DataFrame, filters: dict[str, list
     left, right = st.columns(2)
     with left:
         progress = diagnostic_long.groupby("Test", as_index=False)["Score"].mean()
-        fig = px.line(
+        fig = px.bar(
             progress,
             x="Test",
             y="Score",
-            markers=True,
-            title="Average Diagnostic Progress",
+            text="Score",
+            title="Average Mark Distribution",
             category_orders={"Test": diagnostic_columns},
-            color_discrete_sequence=["#1d4ed8"],
+            color="Test",
+            color_discrete_sequence=["#28277f", "#0f766e", "#ef1c2a", "#facc15"],
         )
-        fig.update_layout(height=390, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=55, b=20))
+        fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
+        fig.update_layout(height=390, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=55, b=20), showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
     with right:
@@ -671,7 +687,7 @@ def render_sm_diagnostic_analysis(records: pd.DataFrame, filters: dict[str, list
             y="Score",
             color="KELAS",
             markers=True,
-            title="All Class Diagnostic Progress",
+            title="All Class Progress (Average Mark)",
             category_orders={"Test": diagnostic_columns},
         )
         fig.update_layout(height=390, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=55, b=20))
@@ -679,19 +695,6 @@ def render_sm_diagnostic_analysis(records: pd.DataFrame, filters: dict[str, list
 
     left, right = st.columns(2)
     with left:
-        fig = px.box(
-            diagnostic_long,
-            x="Test",
-            y="Score",
-            points=False,
-            title="Score Distribution by Diagnostic",
-            category_orders={"Test": diagnostic_columns},
-            color_discrete_sequence=["#0f766e"],
-        )
-        fig.update_layout(height=360, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=55, b=20))
-        st.plotly_chart(fig, use_container_width=True)
-
-    with right:
         sistem_heatmap = diagnostic_long.pivot_table(
             index="Test",
             columns="SISTEM",
@@ -706,11 +709,77 @@ def render_sm_diagnostic_analysis(records: pd.DataFrame, filters: dict[str, list
             aspect="auto",
             text_auto=".1f",
             color_continuous_scale="YlGnBu",
-            title="Diagnostic Average Heatmap: SES vs SDS",
+            title="Comparison Between Sistem",
             zmin=0,
             zmax=100,
         )
         fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20))
+        st.plotly_chart(fig, use_container_width=True)
+
+    with right:
+        jurusan_heatmap = diagnostic_long.pivot_table(
+            index="JURUSAN",
+            columns="Test",
+            values="Score",
+            aggfunc="mean",
+        ).reindex(columns=diagnostic_columns)
+        fig = px.imshow(
+            jurusan_heatmap.round(1),
+            aspect="auto",
+            text_auto=".1f",
+            color_continuous_scale="YlGnBu",
+            title="Comparison Between Jurusan",
+            zmin=0,
+            zmax=100,
+        )
+        fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20))
+        st.plotly_chart(fig, use_container_width=True)
+
+    left, right = st.columns(2)
+    with left:
+        fig = px.box(
+            diagnostic_long,
+            x="Test",
+            y="Score",
+            points=False,
+            title="Score Distribution",
+            category_orders={"Test": diagnostic_columns},
+            color_discrete_sequence=["#0f766e"],
+        )
+        fig.update_layout(height=420, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=55, b=20))
+        st.plotly_chart(fig, use_container_width=True)
+
+    with right:
+        top_classes = (
+            diagnostic_long.groupby(["Test", "KELAS"], as_index=False)["Score"]
+            .mean()
+            .dropna(subset=["Score"])
+        )
+        top_classes = (
+            top_classes.sort_values(["Test", "Score"], ascending=[True, False])
+            .groupby("Test", group_keys=False)
+            .head(5)
+        )
+        top_classes["Score"] = top_classes["Score"].round(1)
+        fig = px.bar(
+            top_classes,
+            x="KELAS",
+            y="Score",
+            color="Test",
+            barmode="group",
+            text="Score",
+            title="Top 5 Classes",
+            category_orders={"Test": diagnostic_columns},
+            color_discrete_sequence=["#28277f", "#0f766e", "#ef1c2a", "#facc15"],
+        )
+        fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
+        fig.update_layout(
+            height=420,
+            yaxis_range=[0, 100],
+            xaxis_title="Class",
+            yaxis_title="Average Mark",
+            margin=dict(l=20, r=20, t=55, b=20),
+        )
         st.plotly_chart(fig, use_container_width=True)
 
 
@@ -2480,6 +2549,19 @@ def system_filtered_records(records: pd.DataFrame, system_label: str) -> pd.Data
     return records[system_bucket_series(records["SISTEM"]) == system_label]
 
 
+def filter_records_by_groups(records: pd.DataFrame, group_column: str, selected_groups: list[str]) -> pd.DataFrame:
+    if records.empty or group_column not in records or not selected_groups:
+        return records
+    selected_set = {str(value).strip() for value in selected_groups if str(value).strip()}
+    if not selected_set:
+        return records
+    if group_column == "PENSYARAH":
+        return records[
+            records[group_column].apply(lambda value: bool(selected_set.intersection(split_people(value))))
+        ]
+    return records[records[group_column].astype(str).str.strip().isin(selected_set)]
+
+
 def system_bucket_series(values: pd.Series) -> pd.Series:
     return values.fillna("").astype(str).map(system_bucket_label)
 
@@ -2606,6 +2688,7 @@ def render_progress_section(
                 system_base,
                 section_label,
             )
+            filtered_record_mode = group_column in {"PENSYARAH", "KELAS", "PROGRAM"}
             selected_groups: list[str] = []
             left, right = st.columns([1.1, 1])
             with left:
@@ -2617,6 +2700,7 @@ def render_progress_section(
                     metric_label,
                     axis_title,
                     f"{group_column}_{section_label}_{system_label}_rank_chart",
+                    enable_selection=True,
                     )
                 )
             with right:
@@ -2639,7 +2723,7 @@ def render_progress_section(
                                 selected_groups.append(str(rank.iloc[row_index][group_column]))
                     except TypeError:
                         st.dataframe(rank, hide_index=True, use_container_width=True)
-            if selected_groups and group_column in system_frame.columns:
+            if not filtered_record_mode and selected_groups and group_column in system_frame.columns:
                 selected_set = {str(value) for value in selected_groups}
                 selected_frame = system_frame[system_frame[group_column].astype(str).isin(selected_set)]
                 render_selected_students(
@@ -2647,7 +2731,20 @@ def render_progress_section(
                     selected_frame,
                     section_label,
                 )
-            render_progress_distribution(system_frame, group_column, section_label, system_label)
+            distribution_selected = render_progress_distribution(
+                system_frame,
+                group_column,
+                section_label,
+                system_label,
+                return_selection=filtered_record_mode,
+            )
+            if filtered_record_mode:
+                table_frame = system_base
+                if distribution_selected is not None and not distribution_selected.empty:
+                    table_frame = distribution_selected
+                elif selected_groups:
+                    table_frame = filter_records_by_groups(system_base, group_column, selected_groups)
+                render_progress_filtered_record_table(table_frame, section_label, system_label)
 
 
 def render_progress_assessment_cards(
@@ -2677,11 +2774,75 @@ def render_progress_distribution(
     group_column: str,
     section_label: str,
     system_label: str,
-) -> None:
+    return_selection: bool = False,
+) -> pd.DataFrame | None:
     if is_spm_assessment(section_label) or is_pspm_assessment(section_label):
-        render_progress_grade_heatmap(frame, group_column, section_label, system_label)
+        return render_progress_grade_heatmap(
+            frame,
+            group_column,
+            section_label,
+            system_label,
+            enable_selection=True,
+            return_selection=return_selection,
+        )
     elif is_diagnostic_assessment(section_label):
-        render_diagnostic_mark_distribution(frame, section_label, system_label)
+        return render_diagnostic_mark_distribution(
+            frame,
+            section_label,
+            system_label,
+            enable_selection=True,
+            return_selection=return_selection,
+        )
+    return None
+
+
+def render_progress_filtered_record_table(
+    base_frame: pd.DataFrame,
+    assessment_column: str,
+    system_label: str,
+) -> None:
+    if base_frame.empty:
+        blank_state("No filtered records for this lecturer progress section.")
+        return
+
+    detail = base_frame.copy()
+    value_label = selected_assessment_value_label(assessment_column) or "VALUE"
+    if is_diagnostic_assessment(assessment_column):
+        if "Score" in detail.columns:
+            detail[value_label] = pd.to_numeric(detail["Score"], errors="coerce").map(format_mark_value)
+        else:
+            detail[value_label] = pd.to_numeric(
+                detail.get(assessment_column, pd.Series(dtype=float)),
+                errors="coerce",
+            ).map(format_mark_value)
+    elif "Raw Value" in detail.columns:
+        detail[value_label] = detail["Raw Value"].fillna("").astype(str).str.strip()
+    elif assessment_column in detail.columns:
+        detail[value_label] = detail[assessment_column].fillna("").astype(str).str.strip()
+    else:
+        detail[value_label] = ""
+
+    columns = [
+        "NAMA PELAJAR",
+        "NO MATRIK",
+        "KELAS",
+        "PENSYARAH",
+        "JURUSAN",
+        "SISTEM",
+        value_label,
+    ]
+    available_columns = [column for column in columns if column in detail.columns]
+    filtered = detail[available_columns].drop_duplicates()
+    sort_columns = [column for column in ["NAMA PELAJAR", "NO MATRIK"] if column in filtered.columns]
+    if sort_columns:
+        filtered = filtered.sort_values(sort_columns, na_position="last")
+
+    st.markdown("**Filtered Record**")
+    render_data_table(
+        filtered,
+        f"progress_filtered_record_{safe_key(assessment_column)}_{safe_key(system_label)}",
+        f"Filtered Record {assessment_column} {system_label}",
+    )
 
 
 def render_progress_grade_heatmap(
@@ -2689,7 +2850,9 @@ def render_progress_grade_heatmap(
     group_column: str,
     test_name: str,
     system_label: str,
-) -> None:
+    enable_selection: bool = True,
+    return_selection: bool = False,
+) -> pd.DataFrame | None:
     if frame.empty or group_column not in frame or "Raw Value" not in frame:
         return
     clean = frame[[group_column, "Raw Value"]].copy()
@@ -2823,6 +2986,9 @@ def render_progress_grade_heatmap(
         zeroline=False,
     )
     chart_key = f"{group_column}_{test_name}_{system_label}_grade_heatmap"
+    if not enable_selection:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        return
     try:
         event = st.plotly_chart(
             fig,
@@ -2861,14 +3027,23 @@ def render_progress_grade_heatmap(
         (frame[group_column].astype(str).str.strip() == selected_group)
         & (frame["Raw Value"].astype("string").str.strip() == selected_grade)
     ]
+    if return_selection:
+        return selected_frame
     render_selected_students(
         f"Selected Students: {selected_group} | {test_name} {selected_grade}",
         selected_frame,
         test_name,
     )
+    return None
 
 
-def render_diagnostic_mark_distribution(frame: pd.DataFrame, test_name: str, system_label: str) -> None:
+def render_diagnostic_mark_distribution(
+    frame: pd.DataFrame,
+    test_name: str,
+    system_label: str,
+    enable_selection: bool = True,
+    return_selection: bool = False,
+) -> pd.DataFrame | None:
     if frame.empty or "Score" not in frame:
         return
     scores = pd.to_numeric(frame["Score"], errors="coerce").dropna()
@@ -2905,6 +3080,9 @@ def render_diagnostic_mark_distribution(frame: pd.DataFrame, test_name: str, sys
     )
     fig.update_xaxes(type="category", categoryorder="array", categoryarray=distribution["Mark Label"].tolist())
     chart_key = f"{test_name}_{system_label}_diagnostic_distribution"
+    if not enable_selection:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        return
     try:
         event = st.plotly_chart(
             fig,
@@ -2948,11 +3126,14 @@ def render_diagnostic_mark_distribution(frame: pd.DataFrame, test_name: str, sys
     if pd.isna(selected_mark_value):
         return
     selected_frame = frame[pd.to_numeric(frame["Score"], errors="coerce").round(2) == round(float(selected_mark_value), 2)]
+    if return_selection:
+        return selected_frame
     render_selected_students(
         f"Selected Students: {test_name} Mark {selected_mark_value:g}",
         selected_frame,
         test_name,
     )
+    return None
 
 
 def ranked_performance(performance_long: pd.DataFrame, group_column: str) -> pd.DataFrame:
@@ -2998,6 +3179,7 @@ def render_rank_chart(
     metric_label: str,
     axis_title: str,
     chart_key: str,
+    enable_selection: bool = True,
 ) -> list[str]:
     chart_rank = rank.dropna(subset=[metric_label]) if metric_label in rank else rank
     if chart_rank.empty:
@@ -3019,6 +3201,9 @@ def render_rank_chart(
         yaxis={"categoryorder": "total ascending"},
         margin=dict(l=20, r=20, t=55, b=20),
     )
+    if not enable_selection:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        return []
     try:
         event = st.plotly_chart(
             fig,

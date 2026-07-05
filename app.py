@@ -285,7 +285,7 @@ def sidebar_navigation(
     all_pages = [
         "DEMOGRAPHY",
         "PROFILING",
-        "DETAILED INFO",
+        "DETAILED / DOWNLOAD",
         "SPM ANALYSIS",
         "PSPM ANALYSIS",
         "DIAGNOSTIC ANALYSIS",
@@ -1185,7 +1185,7 @@ def progress_rank_page(records: pd.DataFrame, filters: dict[str, list[str]], gro
 
 def download_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> None:
     page_header(
-        "DETAILED INFO",
+        "DETAILED / DOWNLOAD",
         "Choose fields, filter rows, and export the selected dataset.",
         user["role"],
     )
@@ -3386,7 +3386,7 @@ def main() -> None:
         "CLASS PROGRESS",
         "PROGRAM PROGRESS",
         "PROFILING",
-        "DETAILED INFO",
+        "DETAILED / DOWNLOAD",
     ]:
         base_records = store.fetch_base_records(user, results_mode="all")
     elif page in ["DATA MANAGEMENT"]:
@@ -3410,7 +3410,7 @@ def main() -> None:
         program_progress_page(records, user, filters)
     elif page == "PROFILING":
         profiling_page(records, user)
-    elif page == "DETAILED INFO":
+    elif page == "DETAILED / DOWNLOAD":
         download_page(records, user, store)
     elif page == "ADMIN":
         admin_page(user, store)

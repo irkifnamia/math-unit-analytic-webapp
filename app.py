@@ -1235,7 +1235,7 @@ def download_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> No
 
     export_df = filtered[selected_columns].copy()
     render_data_table(export_df.head(500), "download_preview", "Download Preview")
-    render_download_buttons(export_df, "custom_download_filtered_data", "Custom Download Data", user, store)
+    render_download_buttons(export_df, "custom_download_filtered_data", "Custom Download Data", user, store, include_pdf=False)
 
 
 def apply_detailed_info_assessment_filters(records: pd.DataFrame) -> pd.DataFrame:
@@ -1922,12 +1922,16 @@ def render_download_buttons(
     title: str,
     user: dict | None = None,
     store: SupabaseStore | None = None,
+    include_pdf: bool = True,
 ) -> None:
     export_df = df.copy()
     if export_df.empty:
         return
     st.markdown('<div class="download-strip">', unsafe_allow_html=True)
-    col_csv, col_excel, col_pdf_data, spacer = st.columns([1, 1, 1.2, 4.8])
+    if include_pdf:
+        col_csv, col_excel, col_pdf_data, spacer = st.columns([1, 1, 1.2, 4.8])
+    else:
+        col_csv, col_excel, spacer = st.columns([1, 1, 6])
     with col_csv:
         clicked = st.download_button(
             "Download CSV",
@@ -1950,17 +1954,18 @@ def render_download_buttons(
         )
         if clicked:
             log_download_activity(user, store, title, "Excel", export_df)
-    with col_pdf_data:
-        clicked = st.download_button(
-            "Download PDF (Data)",
-            dataframe_to_pdf_bytes(export_df, title),
-            file_name=f"{file_stem}_data.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-            key=f"{file_stem}_pdf_data",
-        )
-        if clicked:
-            log_download_activity(user, store, title, "PDF", export_df)
+    if include_pdf:
+        with col_pdf_data:
+            clicked = st.download_button(
+                "Download PDF (Data)",
+                dataframe_to_pdf_bytes(export_df, title),
+                file_name=f"{file_stem}_data.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key=f"{file_stem}_pdf_data",
+            )
+            if clicked:
+                log_download_activity(user, store, title, "PDF", export_df)
     st.markdown("</div>", unsafe_allow_html=True)
 
 

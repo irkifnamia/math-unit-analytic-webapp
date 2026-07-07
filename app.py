@@ -151,7 +151,7 @@ APP_USER_IMPORT_ALIASES = {
 
 
 st.set_page_config(
-    page_title="MATHEMATICS UNIT ANALYTIC SITE 2026/2027",
+    page_title="MUAS",
     page_icon="M",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -320,6 +320,8 @@ def sidebar_navigation(
         )
 
     all_pages = [
+        "ADMIN",
+        "DATA MANAGEMENT",
         "DEMOGRAPHY",
         "PROFILING",
         "DETAILED / DOWNLOAD",
@@ -330,16 +332,27 @@ def sidebar_navigation(
         "LECTURER PROGRESS",
         "CLASS PROGRESS",
         "PROGRAM PROGRESS",
-        "DATA MANAGEMENT",
-        "ADMIN",
     ]
+    navigation_labels = {
+        "SPM ANALYSIS": "ANALYSIS : SPM",
+        "PSPM ANALYSIS": "ANALYSIS : PSPM",
+        "DIAGNOSTIC ANALYSIS": "ANALYSIS : DIAGNOSTIC",
+        "EVALUATION ANALYSIS": "ANALYSIS : EVALUATION",
+        "LECTURER PROGRESS": "PROGRESS : LECTURER",
+        "CLASS PROGRESS": "PROGRESS : CLASS",
+        "PROGRAM PROGRESS": "PROGRESS : PROGRAM",
+    }
     role_pages = {
         "admin": all_pages,
         "executive": [page for page in all_pages if page != "ADMIN"],
         "contributor": [page for page in all_pages if page not in ["ADMIN", "LECTURER PROGRESS"]],
         "lecturer": [page for page in all_pages if page not in ["ADMIN", "LECTURER PROGRESS", "DATA MANAGEMENT"]],
     }
-    page = st.sidebar.radio("Navigation", role_pages.get(user["role"], role_pages["lecturer"]))
+    page = st.sidebar.radio(
+        "Navigation",
+        role_pages.get(user["role"], role_pages["lecturer"]),
+        format_func=lambda page_name: navigation_labels.get(page_name, page_name),
+    )
     st.sidebar.markdown(
         f"""
         <div style="

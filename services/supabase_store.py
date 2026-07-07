@@ -336,21 +336,9 @@ class SupabaseStore:
             return 0
 
         if match_column != "id":
-            update_columns = [
-                column
-                for column in rows[0].keys()
-                if column not in {match_column, "updated_at"}
-            ]
-            if len(update_columns) == 1:
-                saved = bulk_update_single_column(
-                    self.client,
-                    table_name,
-                    rows,
-                    match_column,
-                    update_columns[0],
-                )
-                clear_cached_reference_data()
-                return saved
+            saved = bulk_sync_by_match_column(self.client, table_name, rows, match_column)
+            clear_cached_reference_data()
+            return saved
 
         saved = bulk_upsert_batches(self.client, table_name, rows, match_column)
         clear_cached_reference_data()
@@ -747,6 +735,125 @@ def bulk_upsert_batches(
     return saved
 
 
+def bulk_sync_by_match_column(
+    client: Client,
+    table_name: str,
+    rows: list[dict[str, Any]],
+    match_column: str,
+) -> int:
+    existing_values = existing_match_values(client, table_name, match_column)
+    update_rows: list[dict[str, Any]] = []
+    insert_rows: list[dict[str, Any]] = []
+    for row in rows:
+        match_value = row.get(match_column)
+        if is_empty_value(match_value):
+            continue
+        if match_lookup_key(match_value) in existing_values:
+            update_rows.append(row)
+        else:
+            insert_rows.append(row)
+
+    saved = 0
+    if update_rows:
+        saved += bulk_update_rows_by_match(client, table_name, update_rows, match_column)
+    if insert_rows:
+        saved += bulk_insert_batches(client, table_name, insert_rows)
+    return saved
+
+
+def existing_match_values(client: Client, table_name: str, match_column: str) -> set[str]:
+    errors: list[str] = []
+    frame = select_table_frame(client, table_name, [match_column], errors)
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    if frame.empty or match_column not in frame:
+        return set()
+    return {match_lookup_key(value) for value in frame[match_column].tolist() if not is_empty_value(value)}
+
+
+def match_lookup_key(value: Any) -> str:
+    return str(value).strip()
+
+
+def bulk_update_rows_by_match(
+    client: Client,
+    table_name: str,
+    rows: list[dict[str, Any]],
+    match_column: str,
+) -> int:
+    grouped: dict[str, dict[str, Any]] = {}
+    bulk_timestamp = datetime.now(timezone.utc).isoformat()
+    for row in rows:
+        match_value = row.get(match_column)
+        if is_empty_value(match_value):
+            continue
+        payload = {
+            column: value
+            for column, value in row.items()
+            if column not in {match_column, "id", "updated_at"}
+        }
+        if "updated_at" in row:
+            payload["updated_at"] = bulk_timestamp
+        if not payload:
+            continue
+        signature = json.dumps(payload, sort_keys=True, default=str)
+        if signature not in grouped:
+            grouped[signature] = {"payload": payload, "match_values": []}
+        grouped[signature]["match_values"].append(match_value)
+
+    saved = 0
+    for group in grouped.values():
+        payload = group["payload"]
+        match_values = group["match_values"]
+        for start in range(0, len(match_values), 25):
+            chunk = match_values[start : start + 25]
+            execute_update_in_adaptive(client, table_name, payload, match_column, chunk)
+            saved += len(chunk)
+    return saved
+
+
+def bulk_insert_batches(client: Client, table_name: str, rows: list[dict[str, Any]]) -> int:
+    saved = 0
+    batch_size = 20
+    for start in range(0, len(rows), batch_size):
+        saved += insert_batch_adaptive(client, table_name, rows[start : start + batch_size])
+    return saved
+
+
+def insert_batch_adaptive(client: Client, table_name: str, batch: list[dict[str, Any]]) -> int:
+    if not batch:
+        return 0
+    try:
+        execute_insert_batch(client, table_name, batch)
+        return len(batch)
+    except Exception as exc:
+        if len(batch) == 1 or not is_transient_disconnect(exc):
+            raise
+        midpoint = len(batch) // 2
+        sleep(0.5)
+        return insert_batch_adaptive(client, table_name, batch[:midpoint]) + insert_batch_adaptive(
+            client,
+            table_name,
+            batch[midpoint:],
+        )
+
+
+def execute_insert_batch(client: Client, table_name: str, batch: list[dict[str, Any]]) -> None:
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            insert_query = supabase_insert_minimal(client, table_name, batch)
+            insert_query.execute()
+            return
+        except Exception as exc:
+            last_error = exc
+            if not is_transient_disconnect(exc) or attempt == 2:
+                raise
+            sleep(0.75 * (attempt + 1))
+    if last_error:
+        raise last_error
+
+
 def bulk_update_single_column(
     client: Client,
     table_name: str,
@@ -1051,6 +1158,13 @@ def supabase_upsert_minimal(
             on_conflict=match_column,
             default_to_null=False,
         )
+
+
+def supabase_insert_minimal(client: Client, table_name: str, batch: list[dict[str, Any]]):
+    try:
+        return client.table(table_name).insert(batch, returning="minimal")
+    except TypeError:
+        return client.table(table_name).insert(batch)
 
 
 def needs_unique_constraint(exc: Exception) -> bool:

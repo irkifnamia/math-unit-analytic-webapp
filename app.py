@@ -1093,15 +1093,15 @@ def program_progress_page(records: pd.DataFrame, user: dict, filters: dict[str, 
     progress_rank_page(records, filters, "PROGRAM", "Program")
 
 
-def profiling_page(records: pd.DataFrame, user: dict) -> None:
+def profiling_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> None:
     page_header(
         "PROFILING",
         "Profile student, class, and lecturer academic progress.",
         user["role"],
     )
+    lecturer_refs = store.reference_frame("lecturers")
     if records.empty:
-        blank_state("No records match the selected filters. Use Clear filters or Refresh Supabase data in the sidebar.")
-        return
+        st.info("No student records match the selected filters. Lecturer profiles can still use the lecturer reference table.")
 
     student_tab, class_tab, lecturer_tab = st.tabs(["Student", "Class", "Lecturer"])
     with student_tab:
@@ -1109,7 +1109,7 @@ def profiling_page(records: pd.DataFrame, user: dict) -> None:
     with class_tab:
         class_profile_section(records)
     with lecturer_tab:
-        lecturer_profile_section(records)
+        lecturer_profile_section(records, lecturer_refs)
 
 
 def student_profile_section(records: pd.DataFrame) -> None:
@@ -1182,22 +1182,44 @@ def class_profile_section(records: pd.DataFrame) -> None:
     )
 
 
-def lecturer_profile_section(records: pd.DataFrame) -> None:
+def lecturer_profile_section(records: pd.DataFrame, lecturer_refs: pd.DataFrame | None = None) -> None:
+    lecturer_refs = lecturer_refs if isinstance(lecturer_refs, pd.DataFrame) else pd.DataFrame()
+    reference_lecturers = {
+        name
+        for value in lecturer_refs.get("PENSYARAH", pd.Series(dtype=str)).dropna()
+        for name in split_people(value)
+    }
+    record_lecturers = {
+        name
+        for value in records.get("PENSYARAH", pd.Series(dtype=str)).dropna()
+        for name in split_people(value)
+    }
     lecturers = sorted(
-        {
-            name
-            for value in records.get("PENSYARAH", pd.Series(dtype=str)).dropna()
-            for name in split_people(value)
-        }
+        reference_lecturers.union(record_lecturers)
     )
     if not lecturers:
         blank_state("No lecturers available.")
         return
     selected_lecturer = st.selectbox("Lecturer", lecturers, key="profile_lecturer")
-    lecturer_records = records[
-        records["PENSYARAH"].apply(lambda value: selected_lecturer in split_people(value))
-    ]
-    classes = sorted(lecturer_records.get("KELAS", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
+    if "PENSYARAH" in records:
+        lecturer_records = records[
+            records["PENSYARAH"].apply(lambda value: selected_lecturer in split_people(value))
+        ]
+    else:
+        lecturer_records = records.iloc[0:0]
+    reference_classes = []
+    if "PENSYARAH" in lecturer_refs and "KELAS" in lecturer_refs:
+        reference_classes = (
+            lecturer_refs[
+                lecturer_refs["PENSYARAH"].apply(lambda value: selected_lecturer in split_people(value))
+            ]["KELAS"]
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .tolist()
+        )
+    record_classes = lecturer_records.get("KELAS", pd.Series(dtype=str)).dropna().astype(str).str.strip().tolist()
+    classes = sorted(value for value in set([*reference_classes, *record_classes]) if value)
     profile_info_cards(
         {
             "Classes": f"{len(classes):,}",
@@ -4141,7 +4163,7 @@ def main() -> None:
     elif page == "PROGRAM PROGRESS":
         program_progress_page(records, user, filters)
     elif page == "PROFILING":
-        profiling_page(records, user)
+        profiling_page(records, user, store)
     elif page == "DETAILED / DOWNLOAD":
         download_page(records, user, store)
     elif page == "ADMIN":

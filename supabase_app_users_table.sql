@@ -4,10 +4,21 @@ create table if not exists public.app_users (
     updated_at timestamptz not null default now(),
     ic_number text not null unique,
     full_name text not null,
-    role text not null check (role in ('Executive', 'Lecturer')),
+    role text not null,
     pensyarah text,
     is_active boolean not null default true
 );
+
+alter table public.app_users
+drop constraint if exists app_users_role_check;
+
+update public.app_users
+set role = lower(role)
+where role is not null;
+
+alter table public.app_users
+add constraint app_users_role_check
+check (role in ('admin', 'executive', 'contributor', 'lecturer'));
 
 create index if not exists app_users_ic_number_idx
 on public.app_users (ic_number);

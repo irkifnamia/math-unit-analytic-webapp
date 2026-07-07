@@ -17,6 +17,7 @@ STUDENTS_TABLE = "students"
 LECTURERS_TABLE = "lecturers"
 PROGRAMS_TABLE = "programs"
 RESULTS_TABLE = "results"
+ASSESSMENTS_TABLE = "assessments"
 EDIT_HISTORY_TABLE = "edit_history"
 APP_USERS_TABLE = "app_users"
 
@@ -49,6 +50,7 @@ RESULTS_COLUMNS = [
     "PSPM_SEM1",
     "PSPM_SEM2",
 ]
+ASSESSMENTS_COLUMNS = ["id", "created_at", "updated_at", "UJIAN", "KATEGORI", "SUBJEK"]
 SPM_RESULTS_COLUMNS = ["NO MATRIK", "SPM_ADDMATH", "SPM_MATH"]
 
 STUDENTS_WRITABLE_COLUMNS = ["NO MATRIK", "NAMA PELAJAR", "JURUSAN", "SISTEM", "KELAS", "SUBJEK"]
@@ -67,6 +69,7 @@ RESULTS_WRITABLE_COLUMNS = [
     "PSPM_SEM1",
     "PSPM_SEM2",
 ]
+ASSESSMENTS_WRITABLE_COLUMNS = ["UJIAN", "KATEGORI", "SUBJEK"]
 EDIT_HISTORY_COLUMNS = [
     "id",
     "created_at",
@@ -120,6 +123,7 @@ class SupabaseStore:
     def get_reference_data(self) -> dict[str, pd.DataFrame]:
         refs = self.get_core_reference_data()
         refs["results"] = self.get_results_data()
+        refs["assessments"] = self.get_assessments_data()
         return refs
 
     def get_core_reference_data(self) -> dict[str, pd.DataFrame]:
@@ -131,6 +135,11 @@ class SupabaseStore:
         results, errors = get_cached_results_data()
         self.last_errors.extend(errors)
         return results.copy()
+
+    def get_assessments_data(self) -> pd.DataFrame:
+        assessments, errors = get_cached_assessments_data()
+        self.last_errors.extend(errors)
+        return assessments.copy()
 
     def fetch_records(
         self,
@@ -280,9 +289,22 @@ class SupabaseStore:
                     for column in results.columns.tolist()
                     if column not in ["id", "created_at", "updated_at"]
                 ]
+                columns = unique_columns(columns)
                 if "NO MATRIK" in columns:
                     columns = ["NO MATRIK", *[column for column in columns if column != "NO MATRIK"]]
                 return RESULTS_TABLE, columns
+        if key == "assessments":
+            assessments = self.get_assessments_data()
+            if not assessments.empty:
+                columns = [
+                    column
+                    for column in assessments.columns.tolist()
+                    if column not in ["id", "created_at", "updated_at"]
+                ]
+                columns = unique_columns(columns)
+                ordered = [column for column in ASSESSMENTS_WRITABLE_COLUMNS if column in columns]
+                extras = [column for column in columns if column not in ordered]
+                return ASSESSMENTS_TABLE, [*ordered, *extras]
         return reference_table_and_columns(key)
 
     def bulk_upsert_records(self, df: pd.DataFrame) -> tuple[int, int]:
@@ -407,6 +429,8 @@ class SupabaseStore:
         clean = clean_payload(payload, allowed_columns)
         if "ic_number" in clean:
             clean["ic_number"] = "".join(character for character in str(clean["ic_number"]) if character.isdigit())
+        if "role" in clean:
+            clean["role"] = str(clean["role"] or "lecturer").strip().lower()
         if "is_active" not in clean:
             clean["is_active"] = True
         if not clean.get("ic_number") or not clean.get("full_name") or not clean.get("role"):
@@ -495,10 +519,18 @@ def get_cached_results_data() -> tuple[pd.DataFrame, list[str]]:
     return results, errors
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def get_cached_assessments_data() -> tuple[pd.DataFrame, list[str]]:
+    errors: list[str] = []
+    assessments = select_all_table_frame(get_client(), ASSESSMENTS_TABLE, errors, fallback_columns=ASSESSMENTS_COLUMNS)
+    return assessments, errors
+
+
 def clear_cached_reference_data() -> None:
     get_cached_core_reference_data.clear()
     get_cached_spm_results_data.clear()
     get_cached_results_data.clear()
+    get_cached_assessments_data.clear()
 
 
 def fetch_table_frame(
@@ -687,6 +719,7 @@ def with_updated_at(payload: dict[str, Any], table_name: str) -> dict[str, Any]:
         LECTURERS_TABLE,
         PROGRAMS_TABLE,
         RESULTS_TABLE,
+        ASSESSMENTS_TABLE,
         APP_USERS_TABLE,
     }
     if table_name not in timestamp_tables:
@@ -1139,6 +1172,10 @@ def select_columns(columns: list[str]) -> str:
     return ",".join(f'"{column}"' if " " in column else column for column in columns)
 
 
+def unique_columns(columns: list[str]) -> list[str]:
+    return list(dict.fromkeys(column for column in columns if column))
+
+
 def reference_table_and_columns(key: str) -> tuple[str, list[str]]:
     if key == "students":
         return STUDENTS_TABLE, STUDENTS_WRITABLE_COLUMNS
@@ -1148,7 +1185,9 @@ def reference_table_and_columns(key: str) -> tuple[str, list[str]]:
         return PROGRAMS_TABLE, PROGRAMS_WRITABLE_COLUMNS
     if key == "results":
         return RESULTS_TABLE, RESULTS_WRITABLE_COLUMNS
-    raise ValueError("Only existing Supabase tables can be edited: students, lecturers, programs, results.")
+    if key == "assessments":
+        return ASSESSMENTS_TABLE, ASSESSMENTS_WRITABLE_COLUMNS
+    raise ValueError("Only existing Supabase tables can be edited: students, lecturers, programs, results, assessments.")
 
 
 def natural_key_column(key: str) -> str:
@@ -1156,7 +1195,9 @@ def natural_key_column(key: str) -> str:
         return "NO MATRIK"
     if key == "lecturers":
         return "KELAS"
-    raise ValueError("Only existing Supabase tables can be edited: students, lecturers, programs, results.")
+    if key == "assessments":
+        return "UJIAN"
+    raise ValueError("Only existing Supabase tables can be edited: students, lecturers, programs, results, assessments.")
 
 
 def scope_lecturer_records(records: pd.DataFrame, user: dict[str, Any]) -> pd.DataFrame:
@@ -1179,6 +1220,12 @@ def validate_import_frame(
     match_column: str | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
     df = raw.copy()
+    duplicate_upload_columns = sorted({str(column) for column in df.columns[df.columns.duplicated()].tolist()})
+    if duplicate_upload_columns:
+        return df, [
+            "Duplicate column name(s) found in the uploaded file: "
+            f"{', '.join(duplicate_upload_columns)}. Remove duplicate headers and upload again."
+        ]
     template_columns = create_upload_template(dataset_key, update_columns, match_column).columns.tolist()
     writable_columns = [column for column in template_columns if column != "id"]
     import_columns = [column for column in template_columns if column in df.columns]
@@ -1216,6 +1263,7 @@ def required_import_columns(dataset_key: str, match_column: str | None = None) -
         "lecturers": ["KELAS", "PENSYARAH"],
         "programs": ["NO MATRIK", "PROGRAM"],
         "results": ["NO MATRIK"],
+        "assessments": ["UJIAN"],
     }
     return required[dataset_key]
 

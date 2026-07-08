@@ -682,14 +682,15 @@ def clean_payload(
             if include_empty:
                 clean[column] = None
             continue
-        if is_diagnostic_result_column(column):
+        if is_whole_number_result_column(column):
             value = normalize_whole_number(value, column)
         clean[column] = value
     return clean
 
 
-def is_diagnostic_result_column(column: str) -> bool:
-    return str(column).upper().strip().startswith("AMAT")
+def is_whole_number_result_column(column: str) -> bool:
+    normalized = str(column).upper().strip()
+    return normalized.startswith(("AMAT", "TOP", "EVSM", "EVDM"))
 
 
 def normalize_whole_number(value: Any, column: str) -> int:

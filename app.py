@@ -2351,19 +2351,28 @@ def dataset_form_fields(columns: list[str], selected_row: pd.Series | None) -> d
             payload[column] = ui_column.text_input(
                 column,
                 value=form_field_value(selected_row, column),
-                placeholder="Whole number only" if is_diagnostic_assessment(column) else None,
+                placeholder="Whole number only" if is_whole_number_assessment(column) else None,
             )
     return payload
 
 
 def form_field_value(row: pd.Series | None, column: str) -> str:
     value = field_value(row, column)
-    if not value or not is_diagnostic_assessment(column):
+    if not value or not is_whole_number_assessment(column):
         return value
     number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
     if pd.isna(number):
         return value
     return str(int(number)) if float(number).is_integer() else str(number)
+
+
+def is_whole_number_assessment(column: str) -> bool:
+    normalized = str(column).upper().strip()
+    return (
+        is_diagnostic_assessment(column)
+        or is_evaluation_assessment(column)
+        or normalized.startswith(("AMAT", "TOP", "EVSM", "EVDM"))
+    )
 
 
 def safe_key(value: str) -> str:

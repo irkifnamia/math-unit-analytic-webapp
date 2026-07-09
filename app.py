@@ -12,8 +12,10 @@ import streamlit as st
 
 from components.ui import afj_sidebar_brand, app_brand, blank_state, inject_theme, page_header
 from services.supabase_store import (
+    BulkImportBatchError,
     natural_key_column,
     SupabaseStore,
+    UPLOAD_ROW_NUMBER_COLUMN,
 )
 
 
@@ -2092,7 +2094,8 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
                         match_column,
                     )
                     st.subheader("Preview")
-                    render_data_table(preview, f"{dataset_key}_import_preview", f"{dataset_label} Import Preview")
+                    preview_display = preview.drop(columns=[UPLOAD_ROW_NUMBER_COLUMN], errors="ignore")
+                    render_data_table(preview_display, f"{dataset_key}_import_preview", f"{dataset_label} Import Preview")
                     if errors:
                         st.error("Please fix the validation errors before saving.")
                         st.write(errors)
@@ -2148,7 +2151,30 @@ def save_bulk_import(
         st.error("No rows found in the uploaded file.")
         return False
     try:
-        saved = store.bulk_upsert_reference(dataset_key, preview, match_column=match_column)
+        progress_bar = st.progress(0)
+        progress_status = st.empty()
+
+        def update_progress(
+            batch_number: int,
+            total_batches: int,
+            saved_rows: int,
+            total_rows: int,
+            row_numbers: list[int],
+        ) -> None:
+            progress_bar.progress(min(batch_number / total_batches, 1.0))
+            progress_status.info(
+                f"Batch {batch_number}/{total_batches} saved. "
+                f"Uploaded rows {format_import_row_numbers(row_numbers)}. "
+                f"{saved_rows:,}/{total_rows:,} row(s) saved."
+            )
+
+        saved = store.bulk_upsert_reference(
+            dataset_key,
+            preview,
+            match_column=match_column,
+            batch_size=200,
+            progress_callback=update_progress,
+        )
         if saved <= 0:
             st.error("No rows were saved. Check that the uploaded file contains valid matching rows.")
             return False
@@ -2172,9 +2198,25 @@ def save_bulk_import(
             )
         store.refresh_cache()
         return True
+    except BulkImportBatchError as exc:
+        st.error(
+            "Bulk import stopped. "
+            f"Failed batch {exc.batch_number}/{exc.total_batches}. "
+            f"Uploaded row(s): {format_import_row_numbers(exc.row_numbers)}. "
+            f"Supabase error: {exc.original_error}"
+        )
+        return False
     except Exception as exc:
         st.error(f"Bulk import failed: {exc}")
         return False
+
+
+def format_import_row_numbers(row_numbers: list[int]) -> str:
+    if not row_numbers:
+        return "unknown"
+    if len(row_numbers) <= 12:
+        return ", ".join(str(number) for number in row_numbers)
+    return f"{row_numbers[0]}-{row_numbers[-1]} ({len(row_numbers)} rows)"
 
 
 def dataset_search_placeholder(dataset_key: str) -> str:
@@ -2290,9 +2332,11 @@ def validate_selected_import_frame(
     if errors:
         return df, errors
 
+    upload_row_numbers = df.index.to_series().add(2)
     df = df[template_columns].copy()
     for column in df.columns:
         df[column] = df[column].fillna("").astype(str).str.strip()
+    df[UPLOAD_ROW_NUMBER_COLUMN] = upload_row_numbers.values
 
     allowed_update_columns = [
         column
@@ -2303,8 +2347,27 @@ def validate_selected_import_frame(
         errors.append("Choose at least one valid column to update.")
 
     for row_number, row in df.iterrows():
+        upload_row_number = int(row.get(UPLOAD_ROW_NUMBER_COLUMN, row_number + 2))
         if row.get(match_column, "") == "":
-            errors.append(f"Row {row_number + 2}: {match_column} is required")
+            errors.append(f"Row {upload_row_number}: {match_column} is required")
+        if match_column == "id" and row.get(match_column, ""):
+            record_id = pd.to_numeric(pd.Series([row.get(match_column)]), errors="coerce").iloc[0]
+            if pd.isna(record_id) or not float(record_id).is_integer():
+                errors.append(f"Row {upload_row_number}: id must be a whole number")
+        for column in allowed_update_columns:
+            value = row.get(column, "")
+            if value == "":
+                continue
+            if is_whole_number_assessment(column):
+                number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+                if pd.isna(number) or not float(number).is_integer():
+                    errors.append(f"Row {upload_row_number}: {column} must be a whole number")
+            elif is_spm_assessment(column):
+                if value not in SPM_GRADE_ORDER:
+                    errors.append(f"Row {upload_row_number}: {column} must be one of {', '.join(SPM_GRADE_ORDER)}")
+            elif is_pspm_assessment(column):
+                if value not in PSPM_GRADE_ORDER:
+                    errors.append(f"Row {upload_row_number}: {column} must be one of {', '.join(PSPM_GRADE_ORDER)}")
 
     return df, errors
 

@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import json
 from time import sleep
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
@@ -20,6 +20,7 @@ RESULTS_TABLE = "results"
 ASSESSMENTS_TABLE = "assessments"
 EDIT_HISTORY_TABLE = "edit_history"
 APP_USERS_TABLE = "app_users"
+UPLOAD_ROW_NUMBER_COLUMN = "_UPLOAD_ROW_NUMBER"
 
 STUDENTS_COLUMNS = [
     "id",
@@ -107,6 +108,24 @@ APP_USERS_COLUMNS = [
 ]
 
 UPLOAD_COLUMNS = ["NO MATRIK", "NAMA PELAJAR", "JURUSAN", "SISTEM", "KELAS", "SUBJEK"]
+
+
+class BulkImportBatchError(RuntimeError):
+    def __init__(
+        self,
+        batch_number: int,
+        total_batches: int,
+        row_numbers: list[int],
+        original_error: Exception,
+    ) -> None:
+        self.batch_number = batch_number
+        self.total_batches = total_batches
+        self.row_numbers = row_numbers
+        self.original_error = original_error
+        super().__init__(
+            f"Batch {batch_number} of {total_batches} failed for uploaded row(s) "
+            f"{format_row_number_list(row_numbers)}. Supabase error: {original_error}"
+        )
 
 
 class SupabaseStore:
@@ -311,7 +330,14 @@ class SupabaseStore:
         saved = self.bulk_upsert_reference("students", df)
         return saved, 0
 
-    def bulk_upsert_reference(self, key: str, df: pd.DataFrame, match_column: str | None = None) -> int:
+    def bulk_upsert_reference(
+        self,
+        key: str,
+        df: pd.DataFrame,
+        match_column: str | None = None,
+        batch_size: int = 200,
+        progress_callback: Callable[[int, int, int, int, list[int]], None] | None = None,
+    ) -> int:
         table_name, allowed_columns = self.reference_table_and_columns(key)
         match_column = match_column or natural_key_column(key)
         rows: list[dict[str, Any]] = []
@@ -330,17 +356,21 @@ class SupabaseStore:
                 if is_empty_value(match_value):
                     continue
                 write_payload[match_column] = match_value
+            if UPLOAD_ROW_NUMBER_COLUMN in raw:
+                write_payload[UPLOAD_ROW_NUMBER_COLUMN] = raw.get(UPLOAD_ROW_NUMBER_COLUMN)
             rows.append(write_payload)
 
         if not rows:
             return 0
 
-        if match_column != "id":
-            saved = bulk_sync_by_match_column(self.client, table_name, rows, match_column)
-            clear_cached_reference_data()
-            return saved
-
-        saved = bulk_upsert_batches(self.client, table_name, rows, match_column)
+        saved = bulk_upsert_batches(
+            self.client,
+            table_name,
+            rows,
+            match_column,
+            batch_size=batch_size,
+            progress_callback=progress_callback,
+        )
         clear_cached_reference_data()
         return saved
 
@@ -723,17 +753,55 @@ def bulk_upsert_batches(
     table_name: str,
     rows: list[dict[str, Any]],
     match_column: str,
+    batch_size: int = 200,
+    progress_callback: Callable[[int, int, int, int, list[int]], None] | None = None,
 ) -> int:
     saved = 0
-    batch_size = 20
+    total_rows = len(rows)
+    total_batches = max(1, (total_rows + batch_size - 1) // batch_size)
     for start in range(0, len(rows), batch_size):
-        saved += upsert_batch_adaptive(
-            client,
-            table_name,
-            rows[start : start + batch_size],
-            match_column,
-        )
+        batch_number = start // batch_size + 1
+        batch = rows[start : start + batch_size]
+        row_numbers = batch_upload_row_numbers(batch, start)
+        write_batch = strip_internal_bulk_columns(batch)
+        try:
+            saved += upsert_batch_adaptive(
+                client,
+                table_name,
+                write_batch,
+                match_column,
+            )
+        except Exception as exc:
+            raise BulkImportBatchError(batch_number, total_batches, row_numbers, exc) from exc
+        if progress_callback:
+            progress_callback(batch_number, total_batches, saved, total_rows, row_numbers)
     return saved
+
+
+def strip_internal_bulk_columns(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {column: value for column, value in row.items() if column != UPLOAD_ROW_NUMBER_COLUMN}
+        for row in rows
+    ]
+
+
+def batch_upload_row_numbers(rows: list[dict[str, Any]], start_index: int) -> list[int]:
+    row_numbers: list[int] = []
+    for offset, row in enumerate(rows):
+        value = row.get(UPLOAD_ROW_NUMBER_COLUMN)
+        try:
+            row_numbers.append(int(value))
+        except (TypeError, ValueError):
+            row_numbers.append(start_index + offset + 2)
+    return row_numbers
+
+
+def format_row_number_list(row_numbers: list[int]) -> str:
+    if not row_numbers:
+        return "unknown"
+    if len(row_numbers) <= 12:
+        return ", ".join(str(number) for number in row_numbers)
+    return f"{row_numbers[0]}-{row_numbers[-1]} ({len(row_numbers)} rows)"
 
 
 def bulk_sync_by_match_column(
@@ -1037,7 +1105,13 @@ def supabase_insert_minimal(client: Client, table_name: str, batch: list[dict[st
 
 def needs_unique_constraint(exc: Exception) -> bool:
     message = str(exc).lower()
-    return "unique" in message or "constraint" in message or "42p10" in message
+    return (
+        "42p10" in message
+        or "on conflict" in message
+        or "no unique" in message
+        or "there is no unique" in message
+        or "unique or exclusion constraint" in message
+    )
 
 
 def normalize_supabase_id(value: Any) -> Any:

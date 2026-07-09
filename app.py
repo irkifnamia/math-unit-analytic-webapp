@@ -2199,6 +2199,14 @@ def save_bulk_import(
         store.refresh_cache()
         return True
     except BulkImportBatchError as exc:
+        if "42P10" in str(exc.original_error) or "no unique or exclusion constraint" in str(exc.original_error).lower():
+            st.error(
+                "Bulk import stopped because Supabase has no unique key for this match column. "
+                "Run supabase_bulk_import_unique_keys.sql once in Supabase SQL Editor, then try again. "
+                f"Failed batch {exc.batch_number}/{exc.total_batches}; uploaded row(s): "
+                f"{format_import_row_numbers(exc.row_numbers)}. Supabase error: {exc.original_error}"
+            )
+            return False
         st.error(
             "Bulk import stopped. "
             f"Failed batch {exc.batch_number}/{exc.total_batches}. "

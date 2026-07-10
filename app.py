@@ -11,12 +11,30 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from components.ui import afj_sidebar_brand, app_brand, blank_state, inject_theme, page_header
-from services.supabase_store import (
-    BulkImportBatchError,
-    natural_key_column,
-    SupabaseStore,
-    UPLOAD_ROW_NUMBER_COLUMN,
-)
+from services.supabase_store import SupabaseStore
+
+try:
+    from services.supabase_store import BulkImportBatchError
+except ImportError:
+    class BulkImportBatchError(RuntimeError):
+        pass
+
+try:
+    from services.supabase_store import UPLOAD_ROW_NUMBER_COLUMN
+except ImportError:
+    UPLOAD_ROW_NUMBER_COLUMN = "_UPLOAD_ROW_NUMBER"
+
+try:
+    from services.supabase_store import natural_key_column
+except ImportError:
+    def natural_key_column(key: str) -> str:
+        return {
+            "students": "NO MATRIK",
+            "results": "NO MATRIK",
+            "programs": "NO MATRIK",
+            "lecturers": "KELAS",
+            "assessments": "UJIAN",
+        }.get(key, "id")
 
 
 SPM_GRADE_ORDER = ["A+", "A", "A-", "B+", "B", "C+", "C", "D", "E", "G"]

@@ -4294,6 +4294,49 @@ def selected_dataframe_rows(event: object) -> list[int]:
         return getattr(selection, "rows", []) or []
 
 
+def plotly_chart_in_scroll_container(
+    fig: go.Figure,
+    chart_key: str,
+    scroll_height: int | None = None,
+    enable_selection: bool = False,
+) -> object | None:
+    if not scroll_height:
+        if not enable_selection:
+            st.plotly_chart(fig, use_container_width=True, key=chart_key)
+            return None
+        try:
+            return st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key=chart_key,
+                on_select="rerun",
+                selection_mode="points",
+            )
+        except TypeError:
+            st.plotly_chart(fig, use_container_width=True, key=chart_key)
+            return None
+
+    try:
+        container = st.container(height=scroll_height, border=True)
+    except TypeError:
+        container = st.container()
+    with container:
+        if not enable_selection:
+            st.plotly_chart(fig, use_container_width=True, key=chart_key)
+            return None
+        try:
+            return st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key=chart_key,
+                on_select="rerun",
+                selection_mode="points",
+            )
+        except TypeError:
+            st.plotly_chart(fig, use_container_width=True, key=chart_key)
+            return None
+
+
 def render_selected_students(title: str, frame: pd.DataFrame, assessment_column: str | None = None) -> None:
     if frame.empty:
         blank_state("No students match the selected item.")
@@ -4646,7 +4689,7 @@ def render_progress_grade_heatmap(
     )
     fig.update_layout(
         title=f"{test_name} Grade Distribution Heatmap ({system_label})",
-        height=min(2600, max(420, 30 * len(matrix) + 150)),
+        height=max(420, 30 * len(matrix) + 150),
         xaxis_title="Grade",
         yaxis_title="",
         showlegend=False,
@@ -4672,20 +4715,16 @@ def render_progress_grade_heatmap(
         zeroline=False,
     )
     chart_key = f"{group_column}_{test_name}_{system_label}_grade_heatmap"
+    scroll_height = 620 if len(matrix) > 18 else None
     if not enable_selection:
-        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        plotly_chart_in_scroll_container(fig, chart_key, scroll_height=scroll_height)
         return
-    try:
-        event = st.plotly_chart(
-            fig,
-            use_container_width=True,
-            key=chart_key,
-            on_select="rerun",
-            selection_mode="points",
-        )
-    except TypeError:
-        st.plotly_chart(fig, use_container_width=True, key=chart_key)
-        return
+    event = plotly_chart_in_scroll_container(
+        fig,
+        chart_key,
+        scroll_height=scroll_height,
+        enable_selection=True,
+    )
 
     points = selected_plotly_points(event)
     if not points:
@@ -4882,25 +4921,21 @@ def render_rank_chart(
         hover_data=[column for column in ["Rank", "TOTAL PELAJAR", "NO MARK/GRADE"] if column in chart_rank.columns],
     )
     fig.update_layout(
-        height=min(2200, max(390, 28 * len(chart_rank) + 160)),
+        height=max(390, 28 * len(chart_rank) + 160),
         xaxis_title=axis_title,
         yaxis={"categoryorder": "total ascending"},
         margin=dict(l=20, r=20, t=55, b=20),
     )
+    scroll_height = 560 if len(chart_rank) > 12 else None
     if not enable_selection:
-        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        plotly_chart_in_scroll_container(fig, chart_key, scroll_height=scroll_height)
         return []
-    try:
-        event = st.plotly_chart(
-            fig,
-            use_container_width=True,
-            key=chart_key,
-            on_select="rerun",
-            selection_mode="points",
-        )
-    except TypeError:
-        st.plotly_chart(fig, use_container_width=True, key=chart_key)
-        return []
+    event = plotly_chart_in_scroll_container(
+        fig,
+        chart_key,
+        scroll_height=scroll_height,
+        enable_selection=True,
+    )
     return [
         str(point.get("y")).strip()
         for point in selected_plotly_points(event)

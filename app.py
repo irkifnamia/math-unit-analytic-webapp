@@ -85,8 +85,6 @@ ASSESSMENT_IDENTITY_COLUMNS = {
     "SUBJEK",
 }
 PROGRESS_SYSTEM_TABS = ["OVERALL", "SDS", "SES 1/2", "SES 3/4"]
-DEMOGRAPHY_FILTER_SESSION_KEY = "demography_active_filters"
-DEMOGRAPHY_FILTER_VERSION_KEY = "demography_filter_version"
 DATASET_OPTIONS = {
     "Students": "students",
     "Lecturers": "lecturers",
@@ -485,35 +483,16 @@ def demography_dashboard(records: pd.DataFrame, user: dict) -> None:
         blank_state("No records match the selected filters. Use Clear filters or Refresh Supabase data in the sidebar.")
         return
 
-    active_filters = demography_active_filters()
-    view_records = apply_demography_filters(records, active_filters)
-    if active_filters and view_records.empty:
-        st.session_state.pop(DEMOGRAPHY_FILTER_SESSION_KEY, None)
-        st.session_state[DEMOGRAPHY_FILTER_VERSION_KEY] = st.session_state.get(DEMOGRAPHY_FILTER_VERSION_KEY, 0) + 1
-        active_filters = {}
-        view_records = records
-        st.warning("The previous Demography selection no longer matches the current global filters, so it was cleared.")
-
-    if active_filters:
-        filter_text = " | ".join(f"{column}: {value}" for column, value in active_filters.items())
-        filter_cols = st.columns([5, 1.2])
-        filter_cols[0].info(f"Active Demography selection: {filter_text}")
-        if filter_cols[1].button("Clear selection", key="clear_demography_selection", use_container_width=True):
-            st.session_state.pop(DEMOGRAPHY_FILTER_SESSION_KEY, None)
-            st.session_state[DEMOGRAPHY_FILTER_VERSION_KEY] = st.session_state.get(DEMOGRAPHY_FILTER_VERSION_KEY, 0) + 1
-            st.rerun()
-    demography_key_version = st.session_state.get(DEMOGRAPHY_FILTER_VERSION_KEY, 0)
-
     kpis = st.columns(5)
-    kpis[0].metric("Students", f"{view_records['NO MATRIK'].nunique():,}")
-    kpis[1].metric("Kelas", f"{view_records['KELAS'].nunique():,}")
-    kpis[2].metric("Subjek", f"{view_records['SUBJEK'].nunique():,}")
-    kpis[3].metric("Pensyarah", f"{count_people(view_records['PENSYARAH']):,}")
-    kpis[4].metric("Jurusan", f"{view_records['JURUSAN'].nunique():,}")
+    kpis[0].metric("Students", f"{records['NO MATRIK'].nunique():,}")
+    kpis[1].metric("Kelas", f"{records['KELAS'].nunique():,}")
+    kpis[2].metric("Subjek", f"{records['SUBJEK'].nunique():,}")
+    kpis[3].metric("Pensyarah", f"{count_people(records['PENSYARAH']):,}")
+    kpis[4].metric("Jurusan", f"{records['JURUSAN'].nunique():,}")
 
     left, right = st.columns(2)
     with left:
-        jurusan_counts = view_records.drop_duplicates("NO MATRIK")["JURUSAN"].value_counts().reset_index()
+        jurusan_counts = records.drop_duplicates("NO MATRIK")["JURUSAN"].value_counts().reset_index()
         jurusan_counts.columns = ["Jurusan", "Students"]
         fig = px.pie(
             jurusan_counts,
@@ -522,16 +501,12 @@ def demography_dashboard(records: pd.DataFrame, user: dict) -> None:
             hole=0.48,
             title="Distribution by Jurusan",
             color_discrete_sequence=px.colors.qualitative.Set2,
-            custom_data=["Jurusan"],
         )
         fig.update_layout(height=390, margin=dict(l=20, r=20, t=55, b=20))
-        points = render_selectable_plotly_chart(fig, f"demography_jurusan_distribution_{demography_key_version}")
-        selected_value = selected_point_value(points, custom_index=0, fallback_keys=["label"])
-        if selected_value:
-            update_demography_selection("JURUSAN", selected_value)
+        st.plotly_chart(fig, use_container_width=True)
 
     with right:
-        class_counts = view_records.drop_duplicates("NO MATRIK")["KELAS"].value_counts().reset_index()
+        class_counts = records.drop_duplicates("NO MATRIK")["KELAS"].value_counts().reset_index()
         class_counts.columns = ["Kelas", "Students"]
         fig = px.bar(
             class_counts,
@@ -543,14 +518,11 @@ def demography_dashboard(records: pd.DataFrame, user: dict) -> None:
             color_continuous_scale="Teal",
         )
         fig.update_layout(height=390, margin=dict(l=20, r=20, t=55, b=20))
-        points = render_selectable_plotly_chart(fig, f"demography_class_distribution_{demography_key_version}")
-        selected_value = selected_point_value(points, fallback_keys=["y"])
-        if selected_value:
-            update_demography_selection("KELAS", selected_value)
+        st.plotly_chart(fig, use_container_width=True)
 
     subject_col, sistem_col, lecturer_col = st.columns(3)
     with subject_col:
-        subject_counts = view_records["SUBJEK"].value_counts().reset_index()
+        subject_counts = records["SUBJEK"].value_counts().reset_index()
         subject_counts.columns = ["Subjek", "Records"]
         fig = px.bar(
             subject_counts,
@@ -560,13 +532,10 @@ def demography_dashboard(records: pd.DataFrame, user: dict) -> None:
             color_discrete_sequence=["#2563eb"],
         )
         fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20))
-        points = render_selectable_plotly_chart(fig, f"demography_subject_distribution_{demography_key_version}")
-        selected_value = selected_point_value(points, fallback_keys=["x"])
-        if selected_value:
-            update_demography_selection("SUBJEK", selected_value)
+        st.plotly_chart(fig, use_container_width=True)
 
     with sistem_col:
-        sistem_counts = view_records.drop_duplicates("NO MATRIK")["SISTEM"].value_counts().reset_index()
+        sistem_counts = records.drop_duplicates("NO MATRIK")["SISTEM"].value_counts().reset_index()
         sistem_counts.columns = ["Sistem", "Students"]
         fig = px.bar(
             sistem_counts,
@@ -577,13 +546,10 @@ def demography_dashboard(records: pd.DataFrame, user: dict) -> None:
             color_discrete_sequence=["#28277f", "#0f766e", "#ef1c2a", "#facc15"],
         )
         fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20), showlegend=False)
-        points = render_selectable_plotly_chart(fig, f"demography_sistem_distribution_{demography_key_version}")
-        selected_value = selected_point_value(points, fallback_keys=["x"])
-        if selected_value:
-            update_demography_selection("SISTEM", selected_value)
+        st.plotly_chart(fig, use_container_width=True)
 
     with lecturer_col:
-        lecturer_counts = lecturer_count_frame(view_records)
+        lecturer_counts = lecturer_count_frame(records)
         fig = px.bar(
             lecturer_counts,
             x="Records",
@@ -593,13 +559,10 @@ def demography_dashboard(records: pd.DataFrame, user: dict) -> None:
             color_discrete_sequence=["#0f766e"],
         )
         fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20))
-        points = render_selectable_plotly_chart(fig, f"demography_lecturer_distribution_{demography_key_version}")
-        selected_value = selected_point_value(points, fallback_keys=["y"])
-        if selected_value:
-            update_demography_selection("PENSYARAH", selected_value)
+        st.plotly_chart(fig, use_container_width=True)
 
     chart_section_heading("Subject vs Program Matrix")
-    matrix_source = view_records[["NO MATRIK", "SUBJEK", "PROGRAM"]].copy()
+    matrix_source = records[["NO MATRIK", "SUBJEK", "PROGRAM"]].copy()
     for column in ["NO MATRIK", "SUBJEK", "PROGRAM"]:
         matrix_source[column] = matrix_source[column].fillna("").astype(str).str.strip()
     matrix_source = matrix_source[
@@ -627,106 +590,12 @@ def demography_dashboard(records: pd.DataFrame, user: dict) -> None:
         subject_program_matrix["TOTAL"] = subject_program_matrix.sum(axis=1)
         matrix_table = subject_program_matrix.reset_index()
         render_table_download_menu(matrix_table, "demography_subject_program_matrix", "Subject vs Program Matrix")
-        try:
-            matrix_event = st.dataframe(
-                matrix_table,
-                hide_index=True,
-                use_container_width=True,
-                on_select="rerun",
-                selection_mode="single-row",
-                key=f"demography_subject_program_matrix_{demography_key_version}",
-            )
-            for row_index in selected_dataframe_rows(matrix_event):
-                if 0 <= row_index < len(matrix_table):
-                    update_demography_selection("SUBJEK", str(matrix_table.iloc[row_index]["SUBJEK"]).strip())
-        except TypeError:
-            st.dataframe(matrix_table, hide_index=True, use_container_width=True)
+        st.dataframe(matrix_table, hide_index=True, use_container_width=True)
 
-    render_demography_filtered_record_table(view_records, active_filters)
+    render_demography_filtered_record_table(records)
 
 
-def render_selectable_plotly_chart(fig: go.Figure, key: str) -> list[dict]:
-    try:
-        event = st.plotly_chart(
-            fig,
-            use_container_width=True,
-            key=key,
-            on_select="rerun",
-            selection_mode="points",
-        )
-    except TypeError:
-        st.plotly_chart(fig, use_container_width=True, key=key)
-        return []
-    return selected_plotly_points(event)
-
-
-def selected_point_value(
-    points: list[dict],
-    custom_index: int | None = None,
-    fallback_keys: list[str] | None = None,
-) -> str:
-    if not points:
-        return ""
-    point = points[0]
-    if custom_index is not None:
-        custom_data = point.get("customdata")
-        if isinstance(custom_data, (list, tuple)) and len(custom_data) > custom_index:
-            value = str(custom_data[custom_index]).strip()
-            if value:
-                return value
-        elif custom_data is not None and hasattr(custom_data, "__len__") and not isinstance(custom_data, str):
-            try:
-                value = str(custom_data[custom_index]).strip()
-                if value:
-                    return value
-            except (IndexError, TypeError, KeyError):
-                pass
-    for key in fallback_keys or []:
-        value = point.get(key)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return ""
-
-
-def demography_active_filters() -> dict[str, str]:
-    raw_filters = st.session_state.get(DEMOGRAPHY_FILTER_SESSION_KEY, {})
-    if not isinstance(raw_filters, dict):
-        return {}
-    return {
-        str(column): str(value).strip()
-        for column, value in raw_filters.items()
-        if str(column).strip() and str(value).strip()
-    }
-
-
-def update_demography_selection(column: str, value: str) -> None:
-    column = str(column).strip()
-    value = str(value).strip()
-    if not column or not value:
-        return
-    current = demography_active_filters()
-    if current.get(column) == value:
-        return
-    current[column] = value
-    st.session_state[DEMOGRAPHY_FILTER_SESSION_KEY] = current
-    st.rerun()
-
-
-def apply_demography_filters(records: pd.DataFrame, selected_filters: dict[str, str]) -> pd.DataFrame:
-    filtered = records.copy()
-    for column, value in selected_filters.items():
-        if column not in filtered or not value:
-            continue
-        if column == "PENSYARAH":
-            filtered = filtered[
-                filtered[column].apply(lambda item: value in split_people(item))
-            ]
-        else:
-            filtered = filtered[filtered[column].fillna("").astype(str).str.strip() == value]
-    return filtered
-
-
-def render_demography_filtered_record_table(records: pd.DataFrame, selected_filters: dict[str, str]) -> None:
+def render_demography_filtered_record_table(records: pd.DataFrame) -> None:
     columns = [
         "NAMA PELAJAR",
         "NO MATRIK",
@@ -737,16 +606,13 @@ def render_demography_filtered_record_table(records: pd.DataFrame, selected_filt
         "SISTEM",
         "PROGRAM",
     ]
-    available_columns = [column for column in columns if column in filtered.columns]
-    detail = filtered[available_columns].drop_duplicates()
+    available_columns = [column for column in columns if column in records.columns]
+    detail = records[available_columns].drop_duplicates()
     sort_columns = [column for column in ["NAMA PELAJAR", "NO MATRIK"] if column in detail.columns]
     if sort_columns:
         detail = detail.sort_values(sort_columns, na_position="last")
 
     chart_section_heading("Filtered Record")
-    applied_labels = [f"{column}: {value}" for column, value in selected_filters.items()]
-    if applied_labels:
-        st.caption(" | ".join(applied_labels))
     render_data_table(detail, "demography_filtered_record", "Demography Filtered Record")
 
 def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:

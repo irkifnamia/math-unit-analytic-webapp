@@ -619,39 +619,28 @@ def render_demography_filtered_record_table(records: pd.DataFrame) -> None:
 def render_analysis_filtered_record_table(
     base_records: pd.DataFrame,
     selected_records: pd.DataFrame | None,
-    assessment_column: str | None,
+    assessment_columns: list[str],
     file_key: str,
 ) -> None:
-    detail = selected_records.copy() if selected_records is not None and not selected_records.empty else base_records.copy()
+    if selected_records is not None and not selected_records.empty and "NO MATRIK" in selected_records and "NO MATRIK" in base_records:
+        selected_ids = selected_records["NO MATRIK"].dropna().astype(str).str.strip()
+        selected_ids = selected_ids[selected_ids != ""].unique().tolist()
+        detail = base_records[base_records["NO MATRIK"].astype(str).str.strip().isin(selected_ids)].copy()
+    else:
+        detail = base_records.copy()
     if detail.empty:
         blank_state("No filtered records match this analysis selection.")
         return
-
-    value_label = selected_assessment_value_label(assessment_column)
-    if value_label:
-        value_series = selected_assessment_value_series(detail, assessment_column)
-        if value_series is not None:
-            detail[value_label] = value_series
 
     columns = [
         "NAMA PELAJAR",
         "NO MATRIK",
         "KELAS",
         "PENSYARAH",
-        "JURUSAN",
         "SISTEM",
+        "PROGRAM",
     ]
-    if value_label and value_label in detail.columns:
-        columns.append(value_label)
-    elif assessment_column and assessment_column in detail.columns:
-        columns.append(assessment_column)
-    else:
-        analysis_columns = [
-            column
-            for column in assessment_columns_from_records(detail)
-            if column in detail.columns and column not in columns
-        ]
-        columns.extend(analysis_columns)
+    columns.extend(column for column in assessment_columns if column not in columns)
     available_columns = [column for column in columns if column in detail.columns]
     filtered = detail[available_columns].drop_duplicates()
     sort_columns = [column for column in ["NAMA PELAJAR", "NO MATRIK"] if column in filtered.columns]
@@ -667,6 +656,40 @@ def first_non_empty_frame(*frames: pd.DataFrame | None) -> pd.DataFrame | None:
         if frame is not None and not frame.empty:
             return frame
     return None
+
+
+def student_id_tuple(frame: pd.DataFrame | None) -> tuple[str, ...]:
+    if frame is None or frame.empty or "NO MATRIK" not in frame:
+        return ()
+    ids = frame["NO MATRIK"].dropna().astype(str).str.strip()
+    return tuple(sorted(ids[ids != ""].unique().tolist()))
+
+
+def remember_analysis_selection(page_key: str, source_key: str, selected_frame: pd.DataFrame | None) -> None:
+    selected_ids = student_id_tuple(selected_frame)
+    if not selected_ids:
+        return
+    source_state_key = f"analysis_selection_{page_key}_{source_key}"
+    active_state_key = f"analysis_selection_{page_key}_active"
+    previous_ids = st.session_state.get(source_state_key)
+    active = st.session_state.get(active_state_key, {})
+    if previous_ids != selected_ids or not active:
+        st.session_state[source_state_key] = selected_ids
+        st.session_state[active_state_key] = {
+            "source": source_key,
+            "ids": selected_ids,
+        }
+
+
+def analysis_selected_records(base_records: pd.DataFrame, page_key: str) -> pd.DataFrame | None:
+    active = st.session_state.get(f"analysis_selection_{page_key}_active", {})
+    ids = active.get("ids") if isinstance(active, dict) else None
+    if not ids or "NO MATRIK" not in base_records:
+        return None
+    selected_set = {str(value).strip() for value in ids if str(value).strip()}
+    if not selected_set:
+        return None
+    return base_records[base_records["NO MATRIK"].astype(str).str.strip().isin(selected_set)].copy()
 
 
 def selected_grade_records(records: pd.DataFrame, column: str, grade: object) -> pd.DataFrame:
@@ -745,6 +768,7 @@ def render_grade_count_chart(
 
 
 def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
+    page_key = "spm_analysis"
     page_header(
         "SPM ANALYSIS",
         "Analysis for SPM Mathematics and SPM Additional Mathematics achievement.",
@@ -793,6 +817,7 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
             "Grade Distribution",
             "spm_grade_distribution",
         )
+        remember_analysis_selection(page_key, "grade_distribution", selected_frame)
 
     with right:
         addmath_status = addmath_completion_frame(spm_records)
@@ -826,9 +851,11 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
             if status == "Taken":
                 selected_frame = spm_records[taken].copy()
                 selected_assessment = "SPM_ADDMATH"
+                remember_analysis_selection(page_key, "addmath_participation", selected_frame)
             elif status == "Not Taken":
                 selected_frame = spm_records[~taken].copy()
                 selected_assessment = "SPM_ADDMATH"
+                remember_analysis_selection(page_key, "addmath_participation", selected_frame)
 
     proportions = grade_proportion_frame(grade_counts)
     fig = px.bar(
@@ -864,6 +891,7 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
             grade = str(custom_data[1]).strip()
             selected_frame = selected_grade_records(spm_records, column, grade)
             selected_assessment = column
+            remember_analysis_selection(page_key, "grade_proportion", selected_frame)
 
     average_selection, average_assessment = render_average_cgpa_comparison(
         spm_records,
@@ -875,6 +903,7 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
     selected_frame = first_non_empty_frame(average_selection, selected_frame)
     if average_selection is not None and not average_selection.empty:
         selected_assessment = average_assessment
+        remember_analysis_selection(page_key, "average_cgpa", average_selection)
 
     chart_section_heading("MATH vs ADDMATH (GRADE)")
     if {"SPM_MATH", "SPM_ADDMATH"}.issubset(selected_spm_columns):
@@ -891,17 +920,19 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
         selected_frame = first_non_empty_frame(matrix_selection, selected_frame)
         if matrix_selection is not None and not matrix_selection.empty:
             selected_assessment = "SPM_ADDMATH"
+            remember_analysis_selection(page_key, "grade_matrix", matrix_selection)
     else:
         blank_state("Select both SPM_MATH and SPM_ADDMATH in Ujian to view the grade matrix.")
 
     render_analysis_filtered_record_table(
         spm_records,
-        selected_frame,
-        selected_assessment,
+        analysis_selected_records(spm_records, page_key),
+        [column for column in ["SPM_ADDMATH", "SPM_MATH"] if column in spm_records.columns],
         "spm_analysis",
     )
 
 def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
+    page_key = "pspm_analysis"
     page_header(
         "PSPM ANALYSIS",
         "Analyse PSPM DM015, DM025, Semester 1, and Semester 2 grade movement.",
@@ -941,6 +972,7 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
         selected_frame = first_non_empty_frame(proportion_selection, selected_frame)
         if proportion_selection is not None and not proportion_selection.empty:
             selected_assessment = proportion_assessment
+            remember_analysis_selection(page_key, "dm_grade_proportion", proportion_selection)
     with right:
         proportion_selection, proportion_assessment = render_grade_proportion_chart(
             pspm_records,
@@ -952,6 +984,7 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
         selected_frame = first_non_empty_frame(proportion_selection, selected_frame)
         if proportion_selection is not None and not proportion_selection.empty:
             selected_assessment = proportion_assessment
+            remember_analysis_selection(page_key, "sem_grade_proportion", proportion_selection)
 
     centered_section_heading("CGPA COMPARISON")
     left, right = st.columns(2)
@@ -966,6 +999,7 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
         selected_frame = first_non_empty_frame(average_selection, selected_frame)
         if average_selection is not None and not average_selection.empty:
             selected_assessment = average_assessment
+            remember_analysis_selection(page_key, "dm_cgpa", average_selection)
     with right:
         average_selection, average_assessment = render_average_cgpa_comparison(
             pspm_records,
@@ -977,6 +1011,7 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
         selected_frame = first_non_empty_frame(average_selection, selected_frame)
         if average_selection is not None and not average_selection.empty:
             selected_assessment = average_assessment
+            remember_analysis_selection(page_key, "sem_cgpa", average_selection)
 
     centered_section_heading("PSPM GRADE MOVEMENT")
     left, right = st.columns(2)
@@ -992,6 +1027,7 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
         selected_frame = first_non_empty_frame(matrix_selection, selected_frame)
         if matrix_selection is not None and not matrix_selection.empty:
             selected_assessment = "PSPM_DM015"
+            remember_analysis_selection(page_key, "dm_grade_matrix", matrix_selection)
     with right:
         chart_section_heading("PSPM SEM1 vs PSPM SEM2 (Grade)")
         matrix_selection = render_grade_matrix_heatmap(
@@ -1004,6 +1040,7 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
         selected_frame = first_non_empty_frame(matrix_selection, selected_frame)
         if matrix_selection is not None and not matrix_selection.empty:
             selected_assessment = "PSPM_SEM1"
+            remember_analysis_selection(page_key, "sem_grade_matrix", matrix_selection)
 
     centered_section_heading("SPM ADDMATH TO PSPM GRADE MOVEMENT")
     left, right = st.columns(2)
@@ -1020,6 +1057,7 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
             selected_frame = first_non_empty_frame(matrix_selection, selected_frame)
             if matrix_selection is not None and not matrix_selection.empty:
                 selected_assessment = "SPM_ADDMATH"
+                remember_analysis_selection(page_key, "addmath_dm015_matrix", matrix_selection)
         else:
             blank_state("SPM_ADDMATH or PSPM_DM015 column is not available.")
     with right:
@@ -1035,13 +1073,18 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
             selected_frame = first_non_empty_frame(matrix_selection, selected_frame)
             if matrix_selection is not None and not matrix_selection.empty:
                 selected_assessment = "SPM_ADDMATH"
+                remember_analysis_selection(page_key, "addmath_dm025_matrix", matrix_selection)
         else:
             blank_state("SPM_ADDMATH or PSPM_DM025 column is not available.")
 
     render_analysis_filtered_record_table(
         pspm_records,
-        selected_frame,
-        selected_assessment,
+        analysis_selected_records(pspm_records, page_key),
+        [
+            column
+            for column in ["PSPM_DM015", "PSPM_DM025", "PSPM_SEM1", "PSPM_SEM2"]
+            if column in pspm_records.columns
+        ],
         "pspm_analysis",
     )
 
@@ -1141,6 +1184,8 @@ def render_mark_assessment_analysis(
     else:
         fallback_columns = diagnostic_columns_from_records(records) if category == "DIAGNOSTIK" else evaluation_columns_from_records(records)
         mark_columns = assessment_columns_for_category(records, filters, category, fallback_columns, active_subject=subject)
+    mark_columns = ordered_mark_assessment_columns(category, subject, mark_columns)
+    page_key = f"{label}_{subject}"
     if not mark_columns:
         render_mark_analysis_empty_template(
             [],
@@ -1160,8 +1205,8 @@ def render_mark_assessment_analysis(
         render_analysis_filtered_record_table(
             records,
             None,
-            mark_columns[0] if mark_columns else None,
-            f"{label}_{subject}",
+            mark_columns,
+            page_key,
         )
         return
 
@@ -1181,6 +1226,7 @@ def render_mark_assessment_analysis(
         selected_frame = first_non_empty_frame(heatmap_selection, selected_frame)
         if heatmap_selection is not None and not heatmap_selection.empty:
             selected_assessment = str(heatmap_selection.iloc[0].get("Test", "")).strip() or selected_assessment
+            remember_analysis_selection(page_key, "program_heatmap", heatmap_selection)
 
     with right:
         class_progress = assessment_long.groupby(["KELAS", "Test"], as_index=False)["Score"].mean()
@@ -1222,6 +1268,7 @@ def render_mark_assessment_analysis(
                 selected_frame = first_non_empty_frame(class_selection, selected_frame)
                 if not class_selection.empty:
                     selected_assessment = selected_test
+                    remember_analysis_selection(page_key, "class_progress", class_selection)
 
     left, right = st.columns(2)
     with left:
@@ -1243,6 +1290,23 @@ def render_mark_assessment_analysis(
             zmin=0,
             zmax=100,
         )
+        selectable_cells = (
+            sistem_heatmap.reset_index()
+            .melt(id_vars="Test", var_name="SISTEM", value_name="Score")
+            .dropna(subset=["Score"])
+        )
+        if not selectable_cells.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=selectable_cells["SISTEM"],
+                    y=selectable_cells["Test"],
+                    mode="markers",
+                    marker=dict(symbol="square", size=34, color="rgba(0,0,0,0.01)", line=dict(width=0)),
+                    customdata=selectable_cells[["Test", "SISTEM", "Score"]].to_numpy(),
+                    hovertemplate="Test: %{customdata[0]}<br>Sistem: %{customdata[1]}<br>Average Mark: %{customdata[2]:.1f}<extra></extra>",
+                    showlegend=False,
+                )
+            )
         fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20), clickmode="event+select")
         try:
             event = st.plotly_chart(
@@ -1259,6 +1323,10 @@ def render_mark_assessment_analysis(
         if points:
             selected_test = str(points[0].get("y", "")).strip()
             selected_system = str(points[0].get("x", "")).strip()
+            custom_data = points[0].get("customdata")
+            if isinstance(custom_data, (list, tuple)) and len(custom_data) >= 2:
+                selected_test = str(custom_data[0]).strip()
+                selected_system = str(custom_data[1]).strip()
             if selected_test and selected_system:
                 system_selection = assessment_long[
                     (assessment_long["Test"].astype(str).str.strip() == selected_test)
@@ -1267,6 +1335,7 @@ def render_mark_assessment_analysis(
                 selected_frame = first_non_empty_frame(system_selection, selected_frame)
                 if not system_selection.empty:
                     selected_assessment = selected_test
+                    remember_analysis_selection(page_key, "sistem_heatmap", system_selection)
 
     with right:
         heatmap_selection = render_average_heatmap(
@@ -1281,6 +1350,7 @@ def render_mark_assessment_analysis(
         selected_frame = first_non_empty_frame(heatmap_selection, selected_frame)
         if heatmap_selection is not None and not heatmap_selection.empty:
             selected_assessment = str(heatmap_selection.iloc[0].get("Test", "")).strip() or selected_assessment
+            remember_analysis_selection(page_key, "jurusan_heatmap", heatmap_selection)
 
     left, right = st.columns(2)
     with left:
@@ -1313,6 +1383,7 @@ def render_mark_assessment_analysis(
                 selected_frame = first_non_empty_frame(score_selection, selected_frame)
                 if not score_selection.empty:
                     selected_assessment = selected_test
+                    remember_analysis_selection(page_key, "score_distribution", score_selection)
 
     with right:
         top_classes = (
@@ -1374,13 +1445,30 @@ def render_mark_assessment_analysis(
                 selected_frame = first_non_empty_frame(class_selection, selected_frame)
                 if not class_selection.empty:
                     selected_assessment = selected_test
+                    remember_analysis_selection(page_key, "top_classes", class_selection)
 
     render_analysis_filtered_record_table(
         records,
-        selected_frame,
-        selected_assessment or (mark_columns[0] if mark_columns else None),
-        f"{label}_{subject}",
+        analysis_selected_records(records, page_key),
+        mark_columns,
+        page_key,
     )
+
+
+def ordered_mark_assessment_columns(category: str, subject: str, columns: list[str]) -> list[str]:
+    preferred_orders = {
+        ("DIAGNOSTIK", "SM"): ["AMAT_C1C2", "AMAT_C5", "AMAT_C8", "AMAT_C9C10"],
+        ("DIAGNOSTIK", "DM"): ["TOP_C1", "TOP_C2", "TOP_C4", "TOP_C7", "TOP_C3"],
+        ("EVALUATION", "SM"): ["EVSM_C1C2", "EVSM_C5", "EVSM_C8", "EVSM_C9C10"],
+        ("EVALUATION", "DM"): ["EVDM_C1", "EVDM_C2", "EVDM_C4", "EVDM_C7", "EVDM_C3"],
+    }
+    order = preferred_orders.get((str(category).upper().strip(), str(subject).upper().strip()))
+    if not order:
+        return columns
+    lookup = {assessment_key(column): column for column in columns}
+    ordered = [lookup[assessment_key(column)] for column in order if assessment_key(column) in lookup]
+    ordered.extend(column for column in columns if column not in ordered)
+    return ordered
 
 
 def assessment_subjects_for_category(records: pd.DataFrame, filters: dict[str, list[str]], category: str) -> list[str]:
@@ -1502,6 +1590,23 @@ def render_average_heatmap(
         zmin=0,
         zmax=100,
     )
+    selectable_cells = (
+        heatmap.reset_index()
+        .melt(id_vars=index_column, var_name="Test", value_name="Score")
+        .dropna(subset=["Score"])
+    )
+    if not selectable_cells.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=selectable_cells["Test"],
+                y=selectable_cells[index_column],
+                mode="markers",
+                marker=dict(symbol="square", size=34, color="rgba(0,0,0,0.01)", line=dict(width=0)),
+                customdata=selectable_cells[[index_column, "Test", "Score"]].to_numpy(),
+                hovertemplate=f"{index_column}: %{{customdata[0]}}<br>Test: %{{customdata[1]}}<br>Average Mark: %{{customdata[2]:.1f}}<extra></extra>",
+                showlegend=False,
+            )
+        )
     fig.update_layout(
         height=360,
         yaxis_title=yaxis_title,
@@ -1529,6 +1634,10 @@ def render_average_heatmap(
     point = points[0]
     selected_test = str(point.get("x", "")).strip()
     selected_group = str(point.get("y", "")).strip()
+    custom_data = point.get("customdata")
+    if isinstance(custom_data, (list, tuple)) and len(custom_data) >= 2:
+        selected_group = str(custom_data[0]).strip()
+        selected_test = str(custom_data[1]).strip()
     if not selected_test or not selected_group:
         return None
     return assessment_long[
@@ -3776,6 +3885,24 @@ def render_grade_matrix_heatmap(
                 showarrow=False,
                 font=dict(color=text_color, size=12),
             )
+    selectable_cells = matrix.reset_index().melt(
+        id_vars=row_column,
+        var_name=column_column,
+        value_name="Count",
+    )
+    selectable_cells = selectable_cells[selectable_cells["Count"] > 0]
+    if not selectable_cells.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=selectable_cells[column_column],
+                y=selectable_cells[row_column],
+                mode="markers",
+                marker=dict(symbol="square", size=34, color="rgba(0,0,0,0.01)", line=dict(width=0)),
+                customdata=selectable_cells[[row_column, column_column, "Count"]].to_numpy(),
+                hovertemplate=f"{row_column}: %{{customdata[0]}}<br>{column_column}: %{{customdata[1]}}<br>Students: %{{customdata[2]:,}}<extra></extra>",
+                showlegend=False,
+            )
+        )
     fig.update_layout(
         height=min(640, max(360, 34 * len(matrix.index) + 150)),
         xaxis_title=column_column,
@@ -3806,6 +3933,10 @@ def render_grade_matrix_heatmap(
     point = points[0]
     row_grade = point.get("y")
     column_grade = point.get("x")
+    custom_data = point.get("customdata")
+    if isinstance(custom_data, (list, tuple)) and len(custom_data) >= 2:
+        row_grade = custom_data[0]
+        column_grade = custom_data[1]
     if row_grade is None or column_grade is None:
         return None
     return selected_grade_pair_records(records, row_column, column_column, row_grade, column_grade)

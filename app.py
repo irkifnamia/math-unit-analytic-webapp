@@ -4565,12 +4565,6 @@ def render_progress_grade_heatmap(
     if matrix.empty:
         return
 
-    max_groups = 30
-    if len(matrix) > max_groups:
-        top_index = matrix.sum(axis=1).sort_values(ascending=False).head(max_groups).index
-        matrix = matrix.loc[top_index]
-        st.caption(f"Grade heatmap shows the {max_groups} largest {group_column.lower()} groups by available result count.")
-
     heatmap_points = matrix.reset_index().melt(
         id_vars=group_column,
         var_name="Grade",
@@ -4652,7 +4646,7 @@ def render_progress_grade_heatmap(
     )
     fig.update_layout(
         title=f"{test_name} Grade Distribution Heatmap ({system_label})",
-        height=min(860, max(380, 30 * len(matrix) + 150)),
+        height=min(2600, max(420, 30 * len(matrix) + 150)),
         xaxis_title="Grade",
         yaxis_title="",
         showlegend=False,
@@ -4878,7 +4872,7 @@ def render_rank_chart(
         blank_state(f"No records for {title}.")
         return []
     fig = px.bar(
-        chart_rank.head(12),
+        chart_rank,
         x=metric_label,
         y=group_column,
         orientation="h",
@@ -4888,7 +4882,7 @@ def render_rank_chart(
         hover_data=[column for column in ["Rank", "TOTAL PELAJAR", "NO MARK/GRADE"] if column in chart_rank.columns],
     )
     fig.update_layout(
-        height=390,
+        height=min(2200, max(390, 28 * len(chart_rank) + 160)),
         xaxis_title=axis_title,
         yaxis={"categoryorder": "total ascending"},
         margin=dict(l=20, r=20, t=55, b=20),

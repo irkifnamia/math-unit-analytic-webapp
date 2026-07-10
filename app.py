@@ -638,8 +638,14 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
 
     chart_section_heading("MATH vs ADDMATH (GRADE)")
     if {"SPM_MATH", "SPM_ADDMATH"}.issubset(selected_spm_columns):
-        st.caption("NO GRADE under SPM_MATH means the student has an SPM_ADDMATH grade but no valid SPM_MATH grade.")
-        render_grade_matrix_heatmap(spm_records, "SPM_ADDMATH", "SPM_MATH", include_missing_bucket=True)
+        st.caption("NO GRADE means one side is blank or invalid. Row NO GRADE = no SPM_ADDMATH grade; column NO GRADE = no SPM_MATH grade.")
+        render_grade_matrix_heatmap(
+            spm_records,
+            "SPM_ADDMATH",
+            "SPM_MATH",
+            include_missing_bucket=True,
+            missing_bucket_side="both",
+        )
     else:
         blank_state("Select both SPM_MATH and SPM_ADDMATH in Ujian to view the grade matrix.")
 
@@ -3162,6 +3168,7 @@ def grade_matrix(
     row_column: str,
     column_column: str,
     include_missing_bucket: bool = False,
+    missing_bucket_side: str = "column",
 ) -> pd.DataFrame:
     if not {row_column, column_column}.issubset(records.columns):
         return pd.DataFrame()
@@ -3169,8 +3176,21 @@ def grade_matrix(
     clean[row_column] = normalized_grade_series(clean[row_column], grade_order_for_column(row_column))
     clean[column_column] = normalized_grade_series(clean[column_column], grade_order_for_column(column_column))
     if include_missing_bucket:
-        clean = clean.dropna(subset=[row_column])
-        clean[column_column] = clean[column_column].fillna("NO GRADE")
+        row_valid = clean[row_column].notna()
+        column_valid = clean[column_column].notna()
+        include_row_missing = missing_bucket_side in {"row", "both"}
+        include_column_missing = missing_bucket_side in {"column", "both"}
+        if include_row_missing and include_column_missing:
+            clean = clean[row_valid | column_valid]
+            clean[row_column] = clean[row_column].fillna("NO GRADE")
+            clean[column_column] = clean[column_column].fillna("NO GRADE")
+        elif include_row_missing:
+            clean = clean[column_valid]
+            clean[row_column] = clean[row_column].fillna("NO GRADE")
+        else:
+            clean = clean[row_valid]
+            if include_column_missing:
+                clean[column_column] = clean[column_column].fillna("NO GRADE")
     else:
         clean = clean.dropna(subset=[row_column, column_column])
     if clean.empty:
@@ -3191,14 +3211,23 @@ def render_grade_matrix_heatmap(
     row_column: str,
     column_column: str,
     include_missing_bucket: bool = False,
+    missing_bucket_side: str = "column",
 ) -> None:
-    matrix = grade_matrix(records, row_column, column_column, include_missing_bucket=include_missing_bucket)
+    matrix = grade_matrix(
+        records,
+        row_column,
+        column_column,
+        include_missing_bucket=include_missing_bucket,
+        missing_bucket_side=missing_bucket_side,
+    )
     if matrix.empty:
         blank_state(f"No paired grades available for {row_column} and {column_column}.")
         return
     row_order = grade_order_for_column(row_column)
     column_order = grade_order_for_column(column_column)
-    if include_missing_bucket and "NO GRADE" in matrix.columns:
+    if include_missing_bucket and missing_bucket_side in {"row", "both"} and "NO GRADE" in matrix.index:
+        row_order = [*row_order, "NO GRADE"]
+    if include_missing_bucket and missing_bucket_side in {"column", "both"} and "NO GRADE" in matrix.columns:
         column_order = [*column_order, "NO GRADE"]
     matrix = matrix.reindex(index=row_order, columns=column_order, fill_value=0)
     matrix = matrix.loc[matrix.sum(axis=1) > 0, matrix.sum(axis=0) > 0]

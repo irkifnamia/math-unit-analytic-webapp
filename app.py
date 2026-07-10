@@ -2201,40 +2201,79 @@ def apply_detailed_info_assessment_filters(records: pd.DataFrame) -> pd.DataFram
                         filtered[column].replace({None: pd.NA}).astype("string").str.strip().isin(selected)
                     ]
 
-    for row_start in range(0, len(mark_columns), 4):
-        row_columns = st.columns(4)
-        for layout_column, column in zip(row_columns, mark_columns[row_start : row_start + 4]):
-            with layout_column:
-                scores = pd.to_numeric(source[column], errors="coerce").dropna()
-                min_score = float(scores.min()) if not scores.empty else 0.0
-                max_score = float(scores.max()) if not scores.empty else 100.0
-                st.caption(column)
-                range_columns = st.columns(2)
-                with range_columns[0]:
-                    selected_min = st.number_input(
-                        "From",
-                        min_value=0.0,
-                        max_value=100.0,
-                        value=min_score,
-                        step=1.0,
-                        key=f"detailed_info_mark_min_{column}",
-                    )
-                with range_columns[1]:
-                    selected_max = st.number_input(
-                        "To",
-                        min_value=0.0,
-                        max_value=100.0,
-                        value=max_score,
-                        step=1.0,
-                        key=f"detailed_info_mark_max_{column}",
-                    )
-                if not scores.empty:
-                    lower = min(selected_min, selected_max)
-                    upper = max(selected_min, selected_max)
-                    column_scores = pd.to_numeric(filtered[column], errors="coerce")
-                    filtered = filtered[column_scores.between(lower, upper, inclusive="both")]
+    filtered = apply_detailed_info_mark_filters(source, filtered, mark_columns)
 
     return filtered
+
+
+def apply_detailed_info_mark_filters(
+    source: pd.DataFrame,
+    filtered: pd.DataFrame,
+    mark_columns: list[str],
+) -> pd.DataFrame:
+    grouped_columns = detailed_info_mark_filter_groups(source, mark_columns)
+    if not grouped_columns:
+        return filtered
+
+    st.markdown("**Mark Filters**")
+    tab_labels = list(grouped_columns.keys())
+    tabs = st.tabs(tab_labels)
+    for tab, tab_label in zip(tabs, tab_labels):
+        with tab:
+            columns = grouped_columns[tab_label]
+            for row_start in range(0, len(columns), 4):
+                row_columns = st.columns(4)
+                for layout_column, column in zip(row_columns, columns[row_start : row_start + 4]):
+                    with layout_column:
+                        scores = pd.to_numeric(source[column], errors="coerce").dropna()
+                        selected_range = st.slider(
+                            column,
+                            min_value=0.0,
+                            max_value=100.0,
+                            value=(0.0, 100.0),
+                            step=1.0,
+                            key=f"detailed_info_mark_range_{safe_key(tab_label)}_{column}",
+                        )
+                        if not scores.empty:
+                            lower, upper = selected_range
+                            column_scores = pd.to_numeric(filtered[column], errors="coerce")
+                            filtered = filtered[column_scores.between(lower, upper, inclusive="both")]
+    return filtered
+
+
+def detailed_info_mark_filter_groups(source: pd.DataFrame, mark_columns: list[str]) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = {}
+    for category in ["DIAGNOSTIK", "EVALUATION"]:
+        category_columns = [
+            column
+            for column in mark_columns
+            if assessment_category_for_column(column) == category
+        ]
+        for subject in ["SM", "DM", "AM"]:
+            subject_columns = [
+                column
+                for column in category_columns
+                if assessment_column_subject_matches(column, subject)
+            ]
+            subject_columns = ordered_mark_assessment_columns(category, subject, subject_columns)
+            if subject_columns:
+                groups[f"{category.title()} {subject}"] = subject_columns
+
+    assigned = {column for columns in groups.values() for column in columns}
+    other_columns = [column for column in mark_columns if column not in assigned and column in source.columns]
+    if other_columns:
+        groups["Other Marks"] = other_columns
+    return groups
+
+
+def assessment_column_subject_matches(column: str, subject: str) -> bool:
+    metadata = current_assessment_metadata()
+    if metadata.empty or "UJIAN" not in metadata.columns or "SUBJEK" not in metadata.columns:
+        return True
+    matches = metadata[metadata["UJIAN"].apply(assessment_key) == assessment_key(column)]
+    if matches.empty:
+        return True
+    return assessment_subject_matches(matches.iloc[0].get("SUBJEK", ""), subject)
 
 
 def admin_page(user: dict, store: SupabaseStore) -> None:

@@ -543,6 +543,36 @@ def demography_dashboard(records: pd.DataFrame, user: dict) -> None:
         fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20))
         st.plotly_chart(fig, use_container_width=True)
 
+    chart_section_heading("Subject vs Program Matrix")
+    matrix_source = records[["NO MATRIK", "SUBJEK", "PROGRAM"]].copy()
+    for column in ["NO MATRIK", "SUBJEK", "PROGRAM"]:
+        matrix_source[column] = matrix_source[column].fillna("").astype(str).str.strip()
+    matrix_source = matrix_source[
+        (matrix_source["NO MATRIK"] != "")
+        & (matrix_source["SUBJEK"] != "")
+        & (matrix_source["PROGRAM"] != "")
+    ].drop_duplicates(["NO MATRIK", "SUBJEK", "PROGRAM"])
+    if matrix_source.empty:
+        blank_state("No subject and program data available for the selected filters.")
+    else:
+        subject_program_matrix = (
+            matrix_source.pivot_table(
+                index="SUBJEK",
+                columns="PROGRAM",
+                values="NO MATRIK",
+                aggfunc="nunique",
+                fill_value=0,
+            )
+            .astype(int)
+            .sort_index()
+        )
+        subject_program_matrix = subject_program_matrix.reindex(
+            columns=sorted(subject_program_matrix.columns.tolist())
+        )
+        subject_program_matrix["TOTAL"] = subject_program_matrix.sum(axis=1)
+        matrix_table = subject_program_matrix.reset_index()
+        render_data_table(matrix_table, "demography_subject_program_matrix", "Subject vs Program Matrix")
+
 def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
     page_header(
         "SPM ANALYSIS",

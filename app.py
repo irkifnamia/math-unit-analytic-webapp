@@ -615,6 +615,135 @@ def render_demography_filtered_record_table(records: pd.DataFrame) -> None:
     chart_section_heading("Filtered Record")
     render_data_table(detail, "demography_filtered_record", "Demography Filtered Record")
 
+
+def render_analysis_filtered_record_table(
+    base_records: pd.DataFrame,
+    selected_records: pd.DataFrame | None,
+    assessment_column: str | None,
+    file_key: str,
+) -> None:
+    detail = selected_records.copy() if selected_records is not None and not selected_records.empty else base_records.copy()
+    if detail.empty:
+        blank_state("No filtered records match this analysis selection.")
+        return
+
+    value_label = selected_assessment_value_label(assessment_column)
+    if value_label:
+        value_series = selected_assessment_value_series(detail, assessment_column)
+        if value_series is not None:
+            detail[value_label] = value_series
+
+    columns = [
+        "NAMA PELAJAR",
+        "NO MATRIK",
+        "KELAS",
+        "PENSYARAH",
+        "JURUSAN",
+        "SISTEM",
+    ]
+    if value_label and value_label in detail.columns:
+        columns.append(value_label)
+    elif assessment_column and assessment_column in detail.columns:
+        columns.append(assessment_column)
+    else:
+        analysis_columns = [
+            column
+            for column in assessment_columns_from_records(detail)
+            if column in detail.columns and column not in columns
+        ]
+        columns.extend(analysis_columns)
+    available_columns = [column for column in columns if column in detail.columns]
+    filtered = detail[available_columns].drop_duplicates()
+    sort_columns = [column for column in ["NAMA PELAJAR", "NO MATRIK"] if column in filtered.columns]
+    if sort_columns:
+        filtered = filtered.sort_values(sort_columns, na_position="last")
+
+    chart_section_heading("Filtered Record")
+    render_data_table(filtered, f"{file_key}_filtered_record", "Filtered Record")
+
+
+def first_non_empty_frame(*frames: pd.DataFrame | None) -> pd.DataFrame | None:
+    for frame in frames:
+        if frame is not None and not frame.empty:
+            return frame
+    return None
+
+
+def selected_grade_records(records: pd.DataFrame, column: str, grade: object) -> pd.DataFrame:
+    if column not in records:
+        return records.iloc[0:0].copy()
+    selected_grade = str(grade).strip()
+    if not selected_grade:
+        return records.iloc[0:0].copy()
+    if selected_grade == "NO GRADE":
+        return records[~valid_grade_mask(records, column)].copy()
+    clean = normalized_grade_series(records[column], grade_order_for_column(column))
+    return records[clean == selected_grade].copy()
+
+
+def selected_grade_pair_records(
+    records: pd.DataFrame,
+    row_column: str,
+    column_column: str,
+    row_grade: object,
+    column_grade: object,
+) -> pd.DataFrame:
+    if not {row_column, column_column}.issubset(records.columns):
+        return records.iloc[0:0].copy()
+    row_label = str(row_grade).strip()
+    column_label = str(column_grade).strip()
+    if not row_label or not column_label:
+        return records.iloc[0:0].copy()
+    row_values = normalized_grade_series(records[row_column], grade_order_for_column(row_column))
+    column_values = normalized_grade_series(records[column_column], grade_order_for_column(column_column))
+    row_mask = row_values.isna() if row_label == "NO GRADE" else row_values == row_label
+    column_mask = column_values.isna() if column_label == "NO GRADE" else column_values == column_label
+    return records[row_mask & column_mask].copy()
+
+
+def render_grade_count_chart(
+    records: pd.DataFrame,
+    grade_counts: pd.DataFrame,
+    title: str,
+    chart_key: str,
+) -> tuple[pd.DataFrame | None, str | None]:
+    fig = px.bar(
+        grade_counts,
+        x="GRADE",
+        y="COUNT",
+        color="RESULT",
+        barmode="group",
+        title=title,
+        category_orders={"GRADE": GRADE_ORDER},
+        color_discrete_sequence=["#1d4ed8", "#0f766e"],
+        custom_data=["RESULT", "GRADE", "COUNT"],
+    )
+    fig.update_traces(
+        hovertemplate="%{customdata[0]}<br>Grade: %{customdata[1]}<br>Students: %{customdata[2]:,}<extra></extra>"
+    )
+    fig.update_layout(height=390, margin=dict(l=20, r=20, t=55, b=20))
+    try:
+        event = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            key=chart_key,
+            on_select="rerun",
+            selection_mode="points",
+        )
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        return None, None
+    points = selected_plotly_points(event)
+    if not points:
+        return None, None
+    custom_data = points[0].get("customdata")
+    if isinstance(custom_data, (list, tuple)) and len(custom_data) >= 2:
+        column = str(custom_data[0]).strip()
+        grade = str(custom_data[1]).strip()
+        return selected_grade_records(records, column, grade), column
+    return None, None
+
+
 def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
     page_header(
         "SPM ANALYSIS",
@@ -654,20 +783,16 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
         blank_state("No valid SPM grades match the selected filters.")
         return
 
+    selected_frame: pd.DataFrame | None = None
+    selected_assessment: str | None = None
     left, right = st.columns(2)
     with left:
-        fig = px.bar(
+        selected_frame, selected_assessment = render_grade_count_chart(
+            spm_records,
             grade_counts,
-            x="GRADE",
-            y="COUNT",
-            color="RESULT",
-            barmode="group",
-            title="Grade Distribution",
-            category_orders={"GRADE": GRADE_ORDER},
-            color_discrete_sequence=["#1d4ed8", "#0f766e"],
+            "Grade Distribution",
+            "spm_grade_distribution",
         )
-        fig.update_layout(height=390, margin=dict(l=20, r=20, t=55, b=20))
-        st.plotly_chart(fig, use_container_width=True)
 
     with right:
         addmath_status = addmath_completion_frame(spm_records)
@@ -683,7 +808,27 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
         )
         fig.update_traces(hovertemplate="%{x}<br>Students: %{y:,}<br>Percentage: %{customdata[0]:.1f}%<extra></extra>")
         fig.update_layout(height=390, margin=dict(l=20, r=20, t=55, b=20))
-        st.plotly_chart(fig, use_container_width=True)
+        try:
+            event = st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key="spm_addmath_participation",
+                on_select="rerun",
+                selection_mode="points",
+            )
+        except TypeError:
+            st.plotly_chart(fig, use_container_width=True, key="spm_addmath_participation")
+            event = None
+        points = selected_plotly_points(event)
+        if points:
+            status = str(points[0].get("x", "")).strip()
+            taken = valid_grade_mask(spm_records, "SPM_ADDMATH")
+            if status == "Taken":
+                selected_frame = spm_records[taken].copy()
+                selected_assessment = "SPM_ADDMATH"
+            elif status == "Not Taken":
+                selected_frame = spm_records[~taken].copy()
+                selected_assessment = "SPM_ADDMATH"
 
     proportions = grade_proportion_frame(grade_counts)
     fig = px.bar(
@@ -694,32 +839,67 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
         title="Grade Proportion",
         category_orders={"GRADE": GRADE_ORDER},
         color_discrete_sequence=px.colors.qualitative.Safe,
-        custom_data=["COUNT"],
+        custom_data=["RESULT", "GRADE", "COUNT"],
     )
     fig.update_traces(
-        hovertemplate="%{x}<br>Grade: %{fullData.name}<br>Percentage: %{y:.1f}%<br>Students: %{customdata[0]:,}<extra></extra>"
+        hovertemplate="%{customdata[0]}<br>Grade: %{customdata[1]}<br>Percentage: %{y:.1f}%<br>Students: %{customdata[2]:,}<extra></extra>"
     )
     fig.update_layout(height=390, yaxis_title="Percent", margin=dict(l=20, r=20, t=55, b=20))
-    st.plotly_chart(fig, use_container_width=True)
+    try:
+        event = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            key="spm_grade_proportion",
+            on_select="rerun",
+            selection_mode="points",
+        )
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, key="spm_grade_proportion")
+        event = None
+    points = selected_plotly_points(event)
+    if points:
+        custom_data = points[0].get("customdata")
+        if isinstance(custom_data, (list, tuple)) and len(custom_data) >= 2:
+            column = str(custom_data[0]).strip()
+            grade = str(custom_data[1]).strip()
+            selected_frame = selected_grade_records(spm_records, column, grade)
+            selected_assessment = column
 
-    render_average_cgpa_comparison(
+    average_selection, average_assessment = render_average_cgpa_comparison(
         spm_records,
         ["SPM_MATH", "SPM_ADDMATH"],
         "MATH vs ADDMATH (CGPA)",
+        key="spm_average_cgpa_comparison",
+        return_selection=True,
     )
+    selected_frame = first_non_empty_frame(average_selection, selected_frame)
+    if average_selection is not None and not average_selection.empty:
+        selected_assessment = average_assessment
 
     chart_section_heading("MATH vs ADDMATH (GRADE)")
     if {"SPM_MATH", "SPM_ADDMATH"}.issubset(selected_spm_columns):
         st.caption("NO GRADE means one side is blank or invalid. Row NO GRADE = no SPM_ADDMATH grade; column NO GRADE = no SPM_MATH grade.")
-        render_grade_matrix_heatmap(
+        matrix_selection = render_grade_matrix_heatmap(
             spm_records,
             "SPM_ADDMATH",
             "SPM_MATH",
             include_missing_bucket=True,
             missing_bucket_side="both",
+            key="spm_addmath_math_matrix",
+            return_selection=True,
         )
+        selected_frame = first_non_empty_frame(matrix_selection, selected_frame)
+        if matrix_selection is not None and not matrix_selection.empty:
+            selected_assessment = "SPM_ADDMATH"
     else:
         blank_state("Select both SPM_MATH and SPM_ADDMATH in Ujian to view the grade matrix.")
+
+    render_analysis_filtered_record_table(
+        spm_records,
+        selected_frame,
+        selected_assessment,
+        "spm_analysis",
+    )
 
 def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
     page_header(
@@ -746,51 +926,124 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
     kpis[2].metric("Average CGPA PSPM SEM 1", format_average_cgpa(pspm_records, "PSPM_SEM1"))
     kpis[3].metric("Average CGPA PSPM SEM 2", format_average_cgpa(pspm_records, "PSPM_SEM2"))
 
+    selected_frame: pd.DataFrame | None = None
+    selected_assessment: str | None = None
     centered_section_heading("GRADE PROPORTION")
     left, right = st.columns(2)
     with left:
-        render_grade_proportion_chart(pspm_records, ["PSPM_DM015", "PSPM_DM025"], "PSPM DM015 vs PSPM DM025 (Grade Proportion)")
+        proportion_selection, proportion_assessment = render_grade_proportion_chart(
+            pspm_records,
+            ["PSPM_DM015", "PSPM_DM025"],
+            "PSPM DM015 vs PSPM DM025 (Grade Proportion)",
+            key="pspm_dm_grade_proportion",
+            return_selection=True,
+        )
+        selected_frame = first_non_empty_frame(proportion_selection, selected_frame)
+        if proportion_selection is not None and not proportion_selection.empty:
+            selected_assessment = proportion_assessment
     with right:
-        render_grade_proportion_chart(pspm_records, ["PSPM_SEM1", "PSPM_SEM2"], "PSPM SEM1 vs PSPM SEM2 (Grade Proportion)")
+        proportion_selection, proportion_assessment = render_grade_proportion_chart(
+            pspm_records,
+            ["PSPM_SEM1", "PSPM_SEM2"],
+            "PSPM SEM1 vs PSPM SEM2 (Grade Proportion)",
+            key="pspm_sem_grade_proportion",
+            return_selection=True,
+        )
+        selected_frame = first_non_empty_frame(proportion_selection, selected_frame)
+        if proportion_selection is not None and not proportion_selection.empty:
+            selected_assessment = proportion_assessment
 
     centered_section_heading("CGPA COMPARISON")
     left, right = st.columns(2)
     with left:
-        render_average_cgpa_comparison(
+        average_selection, average_assessment = render_average_cgpa_comparison(
             pspm_records,
             ["PSPM_DM015", "PSPM_DM025"],
             "PSPM DM015 vs PSPM DM025 (CGPA)",
+            key="pspm_dm_cgpa_comparison",
+            return_selection=True,
         )
+        selected_frame = first_non_empty_frame(average_selection, selected_frame)
+        if average_selection is not None and not average_selection.empty:
+            selected_assessment = average_assessment
     with right:
-        render_average_cgpa_comparison(
+        average_selection, average_assessment = render_average_cgpa_comparison(
             pspm_records,
             ["PSPM_SEM1", "PSPM_SEM2"],
             "PSPM SEM1 vs PSPM SEM2 (CGPA)",
+            key="pspm_sem_cgpa_comparison",
+            return_selection=True,
         )
+        selected_frame = first_non_empty_frame(average_selection, selected_frame)
+        if average_selection is not None and not average_selection.empty:
+            selected_assessment = average_assessment
 
     centered_section_heading("PSPM GRADE MOVEMENT")
     left, right = st.columns(2)
     with left:
         chart_section_heading("PSPM DM015 vs PSPM DM025 (Grade)")
-        render_grade_matrix_heatmap(pspm_records, "PSPM_DM015", "PSPM_DM025")
+        matrix_selection = render_grade_matrix_heatmap(
+            pspm_records,
+            "PSPM_DM015",
+            "PSPM_DM025",
+            key="pspm_dm015_dm025_matrix",
+            return_selection=True,
+        )
+        selected_frame = first_non_empty_frame(matrix_selection, selected_frame)
+        if matrix_selection is not None and not matrix_selection.empty:
+            selected_assessment = "PSPM_DM015"
     with right:
         chart_section_heading("PSPM SEM1 vs PSPM SEM2 (Grade)")
-        render_grade_matrix_heatmap(pspm_records, "PSPM_SEM1", "PSPM_SEM2")
+        matrix_selection = render_grade_matrix_heatmap(
+            pspm_records,
+            "PSPM_SEM1",
+            "PSPM_SEM2",
+            key="pspm_sem1_sem2_matrix",
+            return_selection=True,
+        )
+        selected_frame = first_non_empty_frame(matrix_selection, selected_frame)
+        if matrix_selection is not None and not matrix_selection.empty:
+            selected_assessment = "PSPM_SEM1"
 
     centered_section_heading("SPM ADDMATH TO PSPM GRADE MOVEMENT")
     left, right = st.columns(2)
     with left:
         chart_section_heading("SPM ADDMATH vs PSPM DM015 (Grade)")
         if {"SPM_ADDMATH", "PSPM_DM015"}.issubset(pspm_records.columns):
-            render_grade_matrix_heatmap(pspm_records, "SPM_ADDMATH", "PSPM_DM015")
+            matrix_selection = render_grade_matrix_heatmap(
+                pspm_records,
+                "SPM_ADDMATH",
+                "PSPM_DM015",
+                key="spm_addmath_pspm_dm015_matrix",
+                return_selection=True,
+            )
+            selected_frame = first_non_empty_frame(matrix_selection, selected_frame)
+            if matrix_selection is not None and not matrix_selection.empty:
+                selected_assessment = "SPM_ADDMATH"
         else:
             blank_state("SPM_ADDMATH or PSPM_DM015 column is not available.")
     with right:
         chart_section_heading("SPM ADDMATH vs PSPM DM025 (Grade)")
         if {"SPM_ADDMATH", "PSPM_DM025"}.issubset(pspm_records.columns):
-            render_grade_matrix_heatmap(pspm_records, "SPM_ADDMATH", "PSPM_DM025")
+            matrix_selection = render_grade_matrix_heatmap(
+                pspm_records,
+                "SPM_ADDMATH",
+                "PSPM_DM025",
+                key="spm_addmath_pspm_dm025_matrix",
+                return_selection=True,
+            )
+            selected_frame = first_non_empty_frame(matrix_selection, selected_frame)
+            if matrix_selection is not None and not matrix_selection.empty:
+                selected_assessment = "SPM_ADDMATH"
         else:
             blank_state("SPM_ADDMATH or PSPM_DM025 column is not available.")
+
+    render_analysis_filtered_record_table(
+        pspm_records,
+        selected_frame,
+        selected_assessment,
+        "pspm_analysis",
+    )
 
 
 def centered_section_heading(title: str) -> None:
@@ -904,17 +1157,30 @@ def render_mark_assessment_analysis(
             f"Marks for {subject} {label} tests are not available yet.",
             key_prefix=f"{category}_{subject}_no_marks",
         )
+        render_analysis_filtered_record_table(
+            records,
+            None,
+            mark_columns[0] if mark_columns else None,
+            f"{label}_{subject}",
+        )
         return
 
+    selected_frame: pd.DataFrame | None = None
+    selected_assessment: str | None = None
     left, right = st.columns(2)
     with left:
-        render_average_heatmap(
+        heatmap_selection = render_average_heatmap(
             assessment_long,
             index_column="PROGRAM",
             test_columns=mark_columns,
             title="Comparison Between Program",
             yaxis_title="Program",
+            key=f"{label}_{subject}_program_heatmap",
+            return_selection=True,
         )
+        selected_frame = first_non_empty_frame(heatmap_selection, selected_frame)
+        if heatmap_selection is not None and not heatmap_selection.empty:
+            selected_assessment = str(heatmap_selection.iloc[0].get("Test", "")).strip() or selected_assessment
 
     with right:
         class_progress = assessment_long.groupby(["KELAS", "Test"], as_index=False)["Score"].mean()
@@ -926,9 +1192,36 @@ def render_mark_assessment_analysis(
             markers=True,
             title="All Class Progress (Average Mark)",
             category_orders={"Test": mark_columns},
+            custom_data=["KELAS", "Test"],
         )
-        fig.update_layout(height=390, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=55, b=20))
-        st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(height=390, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=55, b=20), clickmode="event+select")
+        try:
+            event = st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key=f"{label}_{subject}_class_progress",
+                on_select="rerun",
+                selection_mode="points",
+            )
+        except TypeError:
+            st.plotly_chart(fig, use_container_width=True, key=f"{label}_{subject}_class_progress")
+            event = None
+        points = selected_plotly_points(event)
+        if points:
+            custom_data = points[0].get("customdata")
+            selected_class = ""
+            selected_test = ""
+            if isinstance(custom_data, (list, tuple)) and len(custom_data) >= 2:
+                selected_class = str(custom_data[0]).strip()
+                selected_test = str(custom_data[1]).strip()
+            if selected_class and selected_test:
+                class_selection = assessment_long[
+                    (assessment_long["KELAS"].astype(str).str.strip() == selected_class)
+                    & (assessment_long["Test"].astype(str).str.strip() == selected_test)
+                ].copy()
+                selected_frame = first_non_empty_frame(class_selection, selected_frame)
+                if not class_selection.empty:
+                    selected_assessment = selected_test
 
     left, right = st.columns(2)
     with left:
@@ -950,17 +1243,44 @@ def render_mark_assessment_analysis(
             zmin=0,
             zmax=100,
         )
-        fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20))
-        st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20), clickmode="event+select")
+        try:
+            event = st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key=f"{label}_{subject}_sistem_heatmap",
+                on_select="rerun",
+                selection_mode="points",
+            )
+        except TypeError:
+            st.plotly_chart(fig, use_container_width=True, key=f"{label}_{subject}_sistem_heatmap")
+            event = None
+        points = selected_plotly_points(event)
+        if points:
+            selected_test = str(points[0].get("y", "")).strip()
+            selected_system = str(points[0].get("x", "")).strip()
+            if selected_test and selected_system:
+                system_selection = assessment_long[
+                    (assessment_long["Test"].astype(str).str.strip() == selected_test)
+                    & (system_bucket_series(assessment_long["SISTEM"]) == selected_system)
+                ].copy()
+                selected_frame = first_non_empty_frame(system_selection, selected_frame)
+                if not system_selection.empty:
+                    selected_assessment = selected_test
 
     with right:
-        render_average_heatmap(
+        heatmap_selection = render_average_heatmap(
             assessment_long,
             index_column="JURUSAN",
             test_columns=mark_columns,
             title="Comparison Between Jurusan",
             yaxis_title="Jurusan",
+            key=f"{label}_{subject}_jurusan_heatmap",
+            return_selection=True,
         )
+        selected_frame = first_non_empty_frame(heatmap_selection, selected_frame)
+        if heatmap_selection is not None and not heatmap_selection.empty:
+            selected_assessment = str(heatmap_selection.iloc[0].get("Test", "")).strip() or selected_assessment
 
     left, right = st.columns(2)
     with left:
@@ -973,8 +1293,26 @@ def render_mark_assessment_analysis(
             category_orders={"Test": mark_columns},
             color_discrete_sequence=["#0f766e"],
         )
-        fig.update_layout(height=420, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=55, b=20))
-        st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(height=420, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=55, b=20), clickmode="event+select")
+        try:
+            event = st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key=f"{label}_{subject}_score_distribution",
+                on_select="rerun",
+                selection_mode="points",
+            )
+        except TypeError:
+            st.plotly_chart(fig, use_container_width=True, key=f"{label}_{subject}_score_distribution")
+            event = None
+        points = selected_plotly_points(event)
+        if points:
+            selected_test = str(points[0].get("x", "")).strip()
+            if selected_test:
+                score_selection = assessment_long[assessment_long["Test"].astype(str).str.strip() == selected_test].copy()
+                selected_frame = first_non_empty_frame(score_selection, selected_frame)
+                if not score_selection.empty:
+                    selected_assessment = selected_test
 
     with right:
         top_classes = (
@@ -998,6 +1336,7 @@ def render_mark_assessment_analysis(
             title="Top 5 Classes",
             category_orders={"Test": mark_columns},
             color_discrete_sequence=["#28277f", "#0f766e", "#ef1c2a", "#facc15"],
+            custom_data=["Test", "KELAS"],
         )
         fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
         fig.update_layout(
@@ -1006,8 +1345,42 @@ def render_mark_assessment_analysis(
             xaxis_title="Class",
             yaxis_title="Average Mark",
             margin=dict(l=20, r=20, t=55, b=20),
+            clickmode="event+select",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        try:
+            event = st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key=f"{label}_{subject}_top_classes",
+                on_select="rerun",
+                selection_mode="points",
+            )
+        except TypeError:
+            st.plotly_chart(fig, use_container_width=True, key=f"{label}_{subject}_top_classes")
+            event = None
+        points = selected_plotly_points(event)
+        if points:
+            custom_data = points[0].get("customdata")
+            selected_test = ""
+            selected_class = ""
+            if isinstance(custom_data, (list, tuple)) and len(custom_data) >= 2:
+                selected_test = str(custom_data[0]).strip()
+                selected_class = str(custom_data[1]).strip()
+            if selected_test and selected_class:
+                class_selection = assessment_long[
+                    (assessment_long["Test"].astype(str).str.strip() == selected_test)
+                    & (assessment_long["KELAS"].astype(str).str.strip() == selected_class)
+                ].copy()
+                selected_frame = first_non_empty_frame(class_selection, selected_frame)
+                if not class_selection.empty:
+                    selected_assessment = selected_test
+
+    render_analysis_filtered_record_table(
+        records,
+        selected_frame,
+        selected_assessment or (mark_columns[0] if mark_columns else None),
+        f"{label}_{subject}",
+    )
 
 
 def assessment_subjects_for_category(records: pd.DataFrame, filters: dict[str, list[str]], category: str) -> list[str]:
@@ -1099,16 +1472,18 @@ def render_average_heatmap(
     test_columns: list[str],
     title: str,
     yaxis_title: str,
-) -> None:
+    key: str | None = None,
+    return_selection: bool = False,
+) -> pd.DataFrame | None:
     if index_column not in assessment_long.columns:
         blank_state(f"{index_column} is not available for {title}.")
-        return
+        return None
     heatmap_source = assessment_long.copy()
     heatmap_source[index_column] = heatmap_source[index_column].fillna("").astype(str).str.strip()
     heatmap_source = heatmap_source[heatmap_source[index_column] != ""]
     if heatmap_source.empty:
         blank_state(f"No {index_column.lower()} data available for {title}.")
-        return
+        return None
     heatmap = heatmap_source.pivot_table(
         index=index_column,
         columns="Test",
@@ -1117,7 +1492,7 @@ def render_average_heatmap(
     ).reindex(columns=test_columns)
     if heatmap.empty:
         blank_state(f"No data available for {title}.")
-        return
+        return None
     fig = px.imshow(
         heatmap.round(1),
         aspect="auto",
@@ -1127,8 +1502,39 @@ def render_average_heatmap(
         zmin=0,
         zmax=100,
     )
-    fig.update_layout(height=360, yaxis_title=yaxis_title, margin=dict(l=20, r=20, t=55, b=20))
-    st.plotly_chart(fig, use_container_width=True)
+    fig.update_layout(
+        height=360,
+        yaxis_title=yaxis_title,
+        margin=dict(l=20, r=20, t=55, b=20),
+        clickmode="event+select",
+    )
+    chart_key = key or f"average_heatmap_{safe_key(title)}_{safe_key(index_column)}"
+    if not return_selection:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        return None
+    try:
+        event = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            key=chart_key,
+            on_select="rerun",
+            selection_mode="points",
+        )
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        return None
+    points = selected_plotly_points(event)
+    if not points:
+        return None
+    point = points[0]
+    selected_test = str(point.get("x", "")).strip()
+    selected_group = str(point.get("y", "")).strip()
+    if not selected_test or not selected_group:
+        return None
+    return assessment_long[
+        (assessment_long["Test"].astype(str).str.strip() == selected_test)
+        & (assessment_long[index_column].astype(str).str.strip() == selected_group)
+    ].copy()
 
 
 def diagnostic_sistem_columns(subject: str) -> list[str]:
@@ -3204,12 +3610,18 @@ def addmath_completion_frame(records: pd.DataFrame) -> pd.DataFrame:
     return counts
 
 
-def render_grade_proportion_chart(records: pd.DataFrame, columns: list[str], title: str) -> None:
+def render_grade_proportion_chart(
+    records: pd.DataFrame,
+    columns: list[str],
+    title: str,
+    key: str | None = None,
+    return_selection: bool = False,
+) -> tuple[pd.DataFrame | None, str | None]:
     available_columns = [column for column in columns if column in records.columns]
     grade_counts = grade_long_frame(records, available_columns).value_counts(["RESULT", "GRADE"]).reset_index(name="COUNT")
     if grade_counts.empty:
         blank_state(f"No data available for {title}.")
-        return
+        return None, None
     proportions = grade_proportion_frame(grade_counts)
     fig = px.bar(
         proportions,
@@ -3219,13 +3631,36 @@ def render_grade_proportion_chart(records: pd.DataFrame, columns: list[str], tit
         title=title,
         category_orders={"GRADE": GRADE_ORDER},
         color_discrete_sequence=px.colors.qualitative.Safe,
-        custom_data=["COUNT"],
+        custom_data=["RESULT", "GRADE", "COUNT"],
     )
     fig.update_traces(
-        hovertemplate="%{x}<br>Grade: %{fullData.name}<br>Percentage: %{y:.1f}%<br>Students: %{customdata[0]:,}<extra></extra>"
+        hovertemplate="%{customdata[0]}<br>Grade: %{customdata[1]}<br>Percentage: %{y:.1f}%<br>Students: %{customdata[2]:,}<extra></extra>"
     )
     fig.update_layout(height=390, yaxis_title="Percent", margin=dict(l=20, r=20, t=55, b=20))
-    st.plotly_chart(fig, use_container_width=True)
+    chart_key = key or f"grade_proportion_{safe_key(title)}"
+    if not return_selection:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        return None, None
+    try:
+        event = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            key=chart_key,
+            on_select="rerun",
+            selection_mode="points",
+        )
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        return None, None
+    points = selected_plotly_points(event)
+    if not points:
+        return None, None
+    custom_data = points[0].get("customdata")
+    if isinstance(custom_data, (list, tuple)) and len(custom_data) >= 2:
+        column = str(custom_data[0]).strip()
+        grade = str(custom_data[1]).strip()
+        return selected_grade_records(records, column, grade), column
+    return None, None
 
 
 def count_grades(records: pd.DataFrame, column: str, grades: list[str]) -> int:
@@ -3284,7 +3719,9 @@ def render_grade_matrix_heatmap(
     column_column: str,
     include_missing_bucket: bool = False,
     missing_bucket_side: str = "column",
-) -> None:
+    key: str | None = None,
+    return_selection: bool = False,
+) -> pd.DataFrame | None:
     matrix = grade_matrix(
         records,
         row_column,
@@ -3294,7 +3731,7 @@ def render_grade_matrix_heatmap(
     )
     if matrix.empty:
         blank_state(f"No paired grades available for {row_column} and {column_column}.")
-        return
+        return None
     row_order = grade_order_for_column(row_column)
     column_order = grade_order_for_column(column_column)
     if include_missing_bucket and missing_bucket_side in {"row", "both"} and "NO GRADE" in matrix.index:
@@ -3305,7 +3742,7 @@ def render_grade_matrix_heatmap(
     matrix = matrix.loc[matrix.sum(axis=1) > 0, matrix.sum(axis=0) > 0]
     if matrix.empty:
         blank_state(f"No paired grades available for {row_column} and {column_column}.")
-        return
+        return None
     export_matrix = matrix.reset_index().rename(columns={row_column: row_column})
     render_table_download_menu(
         export_matrix,
@@ -3345,9 +3782,33 @@ def render_grade_matrix_heatmap(
         yaxis_title=row_column,
         margin=dict(l=20, r=20, t=25, b=45),
         plot_bgcolor="#ffffff",
+        clickmode="event+select",
     )
     fig.update_yaxes(autorange="reversed")
-    st.plotly_chart(fig, use_container_width=True)
+    chart_key = key or f"{row_column}_{column_column}_grade_matrix_heatmap"
+    if not return_selection:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        return None
+    try:
+        event = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            key=chart_key,
+            on_select="rerun",
+            selection_mode="points",
+        )
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        return None
+    points = selected_plotly_points(event)
+    if not points:
+        return None
+    point = points[0]
+    row_grade = point.get("y")
+    column_grade = point.get("x")
+    if row_grade is None or column_grade is None:
+        return None
+    return selected_grade_pair_records(records, row_column, column_column, row_grade, column_grade)
 
 
 def cgpa_map_for_column(column: str) -> dict[str, float]:
@@ -3389,11 +3850,17 @@ def format_average_cgpa(records: pd.DataFrame, column: str) -> str:
     return f"{cgpa.mean():.2f}"
 
 
-def render_average_cgpa_comparison(records: pd.DataFrame, columns: list[str], title: str) -> None:
+def render_average_cgpa_comparison(
+    records: pd.DataFrame,
+    columns: list[str],
+    title: str,
+    key: str | None = None,
+    return_selection: bool = False,
+) -> tuple[pd.DataFrame | None, str | None]:
     comparison = average_cgpa_frame(records, columns).dropna(subset=["Average CGPA"])
     if comparison.empty:
         blank_state(f"No CGPA data available for {title}.")
-        return
+        return None, None
     fig = px.bar(
         comparison,
         x="Assessment",
@@ -3409,7 +3876,28 @@ def render_average_cgpa_comparison(records: pd.DataFrame, columns: list[str], ti
         hovertemplate="%{x}<br>Average CGPA: %{y:.2f}<br>Records: %{customdata[0]:,}<extra></extra>",
     )
     fig.update_layout(height=350, yaxis_range=[0, 4], margin=dict(l=20, r=20, t=55, b=20), showlegend=False)
-    st.plotly_chart(fig, use_container_width=True)
+    chart_key = key or f"average_cgpa_{safe_key(title)}"
+    if not return_selection:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        return None, None
+    try:
+        event = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            key=chart_key,
+            on_select="rerun",
+            selection_mode="points",
+        )
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key)
+        return None, None
+    points = selected_plotly_points(event)
+    if not points:
+        return None, None
+    assessment = str(points[0].get("x", "")).strip()
+    if not assessment:
+        return None, None
+    return records[valid_grade_mask(records, assessment)].copy(), assessment
 
 
 def score_series(values: pd.Series, column: str) -> pd.Series:

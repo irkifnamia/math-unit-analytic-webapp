@@ -562,14 +562,17 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
         blank_state("SPM analytics need SPM_MATH and SPM_ADDMATH from the Supabase results table.")
         return
 
-    spm_records = records.dropna(subset=selected_spm_columns, how="all")
+    spm_valid_mask = pd.Series(False, index=records.index)
+    for column in selected_spm_columns:
+        spm_valid_mask = spm_valid_mask | valid_grade_mask(records, column)
+    spm_records = records[spm_valid_mask].copy()
     if spm_records.empty:
         blank_state("No SPM_MATH or SPM_ADDMATH values match the selected filters.")
         return
 
     kpis = st.columns(4)
-    kpis[0].metric("SPM Math Records", f"{spm_records['SPM_MATH'].notna().sum():,}" if "SPM_MATH" in spm_records else "0")
-    kpis[1].metric("SPM Add Math Records", f"{spm_records['SPM_ADDMATH'].notna().sum():,}" if "SPM_ADDMATH" in spm_records else "0")
+    kpis[0].metric("SPM Math Records", f"{valid_grade_count(spm_records, 'SPM_MATH'):,}")
+    kpis[1].metric("SPM Add Math Records", f"{valid_grade_count(spm_records, 'SPM_ADDMATH'):,}")
     kpis[2].metric("ADDMATH A+, A, A-", f"{count_grades(spm_records, 'SPM_ADDMATH', ['A+', 'A', 'A-']):,}")
     kpis[3].metric("ADDMATH E, G", f"{count_grades(spm_records, 'SPM_ADDMATH', ['E', 'G']):,}")
 
@@ -635,7 +638,8 @@ def results_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list
 
     chart_section_heading("MATH vs ADDMATH (GRADE)")
     if {"SPM_MATH", "SPM_ADDMATH"}.issubset(selected_spm_columns):
-        render_grade_matrix_heatmap(spm_records, "SPM_ADDMATH", "SPM_MATH")
+        st.caption("NO GRADE under SPM_MATH means the student has an SPM_ADDMATH grade but no valid SPM_MATH grade.")
+        render_grade_matrix_heatmap(spm_records, "SPM_ADDMATH", "SPM_MATH", include_missing_bucket=True)
     else:
         blank_state("Select both SPM_MATH and SPM_ADDMATH in Ujian to view the grade matrix.")
 
@@ -3075,9 +3079,26 @@ def grade_long_frame(records: pd.DataFrame, grade_columns: list[str]) -> pd.Data
     if not frames:
         return pd.DataFrame(columns=["RESULT", "GRADE"])
     combined = pd.concat(frames, ignore_index=True)
-    combined["GRADE"] = combined["GRADE"].replace({None: pd.NA}).astype("string").str.strip()
-    combined = combined[combined["GRADE"].notna() & (combined["GRADE"] != "")]
+    combined["GRADE"] = normalized_grade_series(combined["GRADE"])
+    combined = combined[combined["GRADE"].notna()]
     return combined
+
+
+def normalized_grade_series(values: pd.Series, allowed_grades: list[str] | None = None) -> pd.Series:
+    allowed = set(allowed_grades or GRADE_ORDER)
+    clean = values.replace({None: pd.NA}).astype("string").str.strip()
+    clean = clean.replace({"": pd.NA, "-": pd.NA, "None": pd.NA, "nan": pd.NA, "NaN": pd.NA})
+    return clean.where(clean.isin(allowed), pd.NA)
+
+
+def valid_grade_mask(records: pd.DataFrame, column: str) -> pd.Series:
+    if column not in records:
+        return pd.Series(False, index=records.index)
+    return normalized_grade_series(records[column], grade_order_for_column(column)).notna()
+
+
+def valid_grade_count(records: pd.DataFrame, column: str) -> int:
+    return int(valid_grade_mask(records, column).sum())
 
 
 def grade_proportion_frame(grade_counts: pd.DataFrame) -> pd.DataFrame:
@@ -3093,7 +3114,7 @@ def addmath_completion_frame(records: pd.DataFrame) -> pd.DataFrame:
     total = len(records)
     if total == 0 or "SPM_ADDMATH" not in records:
         return pd.DataFrame({"Status": ["Taken", "Not Taken"], "Count": [0, 0], "Percent": [0.0, 0.0], "Label": ["0 (0.0%)", "0 (0.0%)"]})
-    taken = records["SPM_ADDMATH"].notna() & (records["SPM_ADDMATH"].astype(str).str.strip() != "")
+    taken = valid_grade_mask(records, "SPM_ADDMATH")
     counts = pd.DataFrame(
         {
             "Status": ["Taken", "Not Taken"],
@@ -3132,18 +3153,26 @@ def render_grade_proportion_chart(records: pd.DataFrame, columns: list[str], tit
 def count_grades(records: pd.DataFrame, column: str, grades: list[str]) -> int:
     if column not in records:
         return 0
-    clean = records[column].replace({None: pd.NA}).astype("string").str.strip()
+    clean = normalized_grade_series(records[column], grade_order_for_column(column))
     return int(clean.isin(grades).sum())
 
 
-def grade_matrix(records: pd.DataFrame, row_column: str, column_column: str) -> pd.DataFrame:
+def grade_matrix(
+    records: pd.DataFrame,
+    row_column: str,
+    column_column: str,
+    include_missing_bucket: bool = False,
+) -> pd.DataFrame:
     if not {row_column, column_column}.issubset(records.columns):
         return pd.DataFrame()
     clean = records[[row_column, column_column]].copy()
-    for column in [row_column, column_column]:
-        clean[column] = clean[column].replace({None: pd.NA}).astype("string").str.strip()
-    clean = clean.dropna(subset=[row_column, column_column])
-    clean = clean[(clean[row_column] != "") & (clean[column_column] != "")]
+    clean[row_column] = normalized_grade_series(clean[row_column], grade_order_for_column(row_column))
+    clean[column_column] = normalized_grade_series(clean[column_column], grade_order_for_column(column_column))
+    if include_missing_bucket:
+        clean = clean.dropna(subset=[row_column])
+        clean[column_column] = clean[column_column].fillna("NO GRADE")
+    else:
+        clean = clean.dropna(subset=[row_column, column_column])
     if clean.empty:
         return pd.DataFrame()
     return pd.crosstab(clean[row_column], clean[column_column])
@@ -3157,13 +3186,20 @@ def grade_order_for_column(column: str) -> list[str]:
     return GRADE_ORDER
 
 
-def render_grade_matrix_heatmap(records: pd.DataFrame, row_column: str, column_column: str) -> None:
-    matrix = grade_matrix(records, row_column, column_column)
+def render_grade_matrix_heatmap(
+    records: pd.DataFrame,
+    row_column: str,
+    column_column: str,
+    include_missing_bucket: bool = False,
+) -> None:
+    matrix = grade_matrix(records, row_column, column_column, include_missing_bucket=include_missing_bucket)
     if matrix.empty:
         blank_state(f"No paired grades available for {row_column} and {column_column}.")
         return
     row_order = grade_order_for_column(row_column)
     column_order = grade_order_for_column(column_column)
+    if include_missing_bucket and "NO GRADE" in matrix.columns:
+        column_order = [*column_order, "NO GRADE"]
     matrix = matrix.reindex(index=row_order, columns=column_order, fill_value=0)
     matrix = matrix.loc[matrix.sum(axis=1) > 0, matrix.sum(axis=0) > 0]
     if matrix.empty:

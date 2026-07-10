@@ -167,7 +167,7 @@ def login_screen(store: SupabaseStore) -> None:
     with center:
         app_brand()
         with st.form("login_form"):
-            ic_number = st.text_input("PASSWORD", placeholder="Example: 900101-14-5555")
+            ic_number = st.text_input("PASSWORD")
             submitted = st.form_submit_button("Sign in", use_container_width=True)
         if submitted:
             user = authenticate_ic_number(ic_number, store)

@@ -1123,6 +1123,7 @@ def render_tov_target_semester(
     semester_label: str,
     columns: tuple[str, str],
 ) -> None:
+    page_key = f"tov_target_analysis_{safe_key(semester_label)}"
     tov_column, target_column = columns
     missing_columns = [column for column in columns if column not in records.columns]
     if missing_columns:
@@ -1139,12 +1140,19 @@ def render_tov_target_semester(
     cards[1].metric(f"Average CGPA {target_column}", format_planning_average_cgpa(semester_records, target_column))
 
     chart_section_heading(f"{tov_column} vs {target_column} (Grade)")
-    render_grade_matrix_heatmap(
+    matrix_selection = render_grade_matrix_heatmap(
         semester_records,
         tov_column,
         target_column,
         key=f"tov_target_matrix_{safe_key(semester_label)}",
+        return_selection=True,
     )
+    if matrix_selection is not None and not matrix_selection.empty:
+        remember_analysis_selection(
+            page_key,
+            f"{safe_key(semester_label)}_grade_matrix",
+            matrix_selection,
+        )
 
     left, right = st.columns(2)
     with left:
@@ -1173,6 +1181,13 @@ def render_tov_target_semester(
             f"tov_target_{safe_key(semester_label)}_kelas",
             f"TOV Target {semester_label} Kelas",
         )
+
+    render_analysis_filtered_record_table(
+        semester_records,
+        analysis_selected_records(semester_records, page_key),
+        [tov_column, target_column],
+        f"tov_target_{safe_key(semester_label)}",
+    )
 
 
 def planning_cgpa_series(values: pd.Series) -> pd.Series:

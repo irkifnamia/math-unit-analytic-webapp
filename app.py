@@ -38,7 +38,7 @@ except ImportError:
 
 
 SPM_GRADE_ORDER = ["A+", "A", "A-", "B+", "B", "C+", "C", "D", "E", "G"]
-PSPM_GRADE_ORDER = ["A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "F"]
+PSPM_GRADE_ORDER = ["A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "F"]
 GRADE_ORDER = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "E", "F", "G"]
 RESULT_COLUMNS = [
     "SPM_ADDMATH",
@@ -130,6 +130,7 @@ PSPM_CGPA_MAP = {
     "C": 2.0,
     "C-": 1.67,
     "D+": 1.33,
+    "D": 1.0,
     "F": 0.0,
 }
 

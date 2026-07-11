@@ -43,6 +43,14 @@ select 'assessments' as table_name, "UJIAN" as key_value, count(*) as duplicate_
 from public.assessments
 where nullif(trim("UJIAN"), '') is not null
 group by "UJIAN"
+having count(*) > 1
+
+union all
+
+select 'planning' as table_name, "NO MATRIK" as key_value, count(*) as duplicate_count
+from public.planning
+where nullif(trim("NO MATRIK"), '') is not null
+group by "NO MATRIK"
 having count(*) > 1;
 
 -- 2) Create the unique indexes needed by app bulk import.
@@ -61,3 +69,6 @@ on public.lecturers ("KELAS");
 
 create unique index if not exists assessments_ujian_unique_idx
 on public.assessments ("UJIAN");
+
+create unique index if not exists planning_no_matrik_unique_idx
+on public.planning ("NO MATRIK");

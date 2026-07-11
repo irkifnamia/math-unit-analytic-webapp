@@ -22,6 +22,7 @@ PLANNING_TABLE = "planning"
 EDIT_HISTORY_TABLE = "edit_history"
 APP_USERS_TABLE = "app_users"
 UPLOAD_ROW_NUMBER_COLUMN = "_UPLOAD_ROW_NUMBER"
+NULL_UPLOAD_VALUES = {"", "-", "none", "nan", "nat", "null"}
 
 STUDENTS_COLUMNS = [
     "id",
@@ -1248,7 +1249,7 @@ def is_empty_value(value: Any) -> bool:
             return True
     except (TypeError, ValueError):
         pass
-    return str(value).strip() == ""
+    return str(value).strip().lower() in NULL_UPLOAD_VALUES
 
 
 def first_non_empty(values: pd.Series) -> Any:

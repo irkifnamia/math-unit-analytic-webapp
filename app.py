@@ -57,6 +57,7 @@ PLANNING_SEMESTERS = {
     "SEMESTER 1": ("TOV SEM 1", "SASARAN SEM 1"),
     "SEMESTER 2": ("TOV SEM 2", "SASARAN SEM 2"),
 }
+NULL_UPLOAD_VALUES = {"", "-", "none", "nan", "nat", "null"}
 APP_USERS_TABLE = "app_users"
 APP_USERS_COLUMNS = [
     "id",
@@ -3174,7 +3175,8 @@ def validate_selected_import_frame(
                 errors.append(f"Row {upload_row_number}: id must be a whole number")
         for column in allowed_update_columns:
             value = row.get(column, "")
-            if value == "":
+            if is_nullable_upload_value(value):
+                df.at[row_number, column] = ""
                 continue
             if is_whole_number_assessment(column):
                 number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
@@ -3188,6 +3190,13 @@ def validate_selected_import_frame(
                     errors.append(f"Row {upload_row_number}: {column} must be one of {', '.join(PSPM_GRADE_ORDER)}")
 
     return df, errors
+
+
+def is_nullable_upload_value(value: object) -> bool:
+    if value is None:
+        return True
+    text = str(value).strip()
+    return text.lower() in NULL_UPLOAD_VALUES
 
 
 def search_any_columns(df: pd.DataFrame, query: str, columns: list[str]) -> pd.DataFrame:

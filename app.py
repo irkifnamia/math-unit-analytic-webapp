@@ -2221,28 +2221,38 @@ def apply_detailed_info_mark_filters(
         return filtered
 
     st.markdown("**Mark Filters**")
-    tab_labels = list(grouped_columns.keys())
-    tabs = st.tabs(tab_labels)
-    for tab, tab_label in zip(tabs, tab_labels):
-        with tab:
-            columns = grouped_columns[tab_label]
-            for row_start in range(0, len(columns), 4):
-                row_columns = st.columns(4)
-                for layout_column, column in zip(row_columns, columns[row_start : row_start + 4]):
-                    with layout_column:
-                        scores = pd.to_numeric(source[column], errors="coerce").dropna()
-                        selected_range = st.slider(
-                            column,
-                            min_value=0.0,
-                            max_value=100.0,
-                            value=(0.0, 100.0),
-                            step=1.0,
-                            key=f"detailed_info_mark_range_{safe_key(tab_label)}_{column}",
+    for group_label, columns in grouped_columns.items():
+        st.caption(group_label.upper())
+        for row_start in range(0, len(columns), 4):
+            row_columns = st.columns(4)
+            for layout_column, column in zip(row_columns, columns[row_start : row_start + 4]):
+                with layout_column:
+                    scores = pd.to_numeric(source[column], errors="coerce").dropna()
+                    st.caption(column)
+                    range_columns = st.columns(2)
+                    with range_columns[0]:
+                        selected_min = st.number_input(
+                            "From",
+                            min_value=0,
+                            max_value=100,
+                            value=0,
+                            step=1,
+                            key=f"detailed_info_mark_min_{safe_key(group_label)}_{column}",
                         )
-                        if not scores.empty:
-                            lower, upper = selected_range
-                            column_scores = pd.to_numeric(filtered[column], errors="coerce")
-                            filtered = filtered[column_scores.between(lower, upper, inclusive="both")]
+                    with range_columns[1]:
+                        selected_max = st.number_input(
+                            "To",
+                            min_value=0,
+                            max_value=100,
+                            value=100,
+                            step=1,
+                            key=f"detailed_info_mark_max_{safe_key(group_label)}_{column}",
+                        )
+                    if not scores.empty:
+                        lower = min(selected_min, selected_max)
+                        upper = max(selected_min, selected_max)
+                        column_scores = pd.to_numeric(filtered[column], errors="coerce")
+                        filtered = filtered[column_scores.between(lower, upper, inclusive="both")]
     return filtered
 
 

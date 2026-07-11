@@ -3042,9 +3042,10 @@ def dataset_search_placeholder(dataset_key: str) -> str:
         "lecturers": "Search by KELAS or PENSYARAH",
         "programs": "Search by NO MATRIK or PROGRAM",
         "results": "Search by NO MATRIK, NAMA PELAJAR, or result value",
+        "planning": "Search by NO MATRIK or planning grade",
         "assessments": "Search by UJIAN, KATEGORI, or SUBJEK",
     }
-    return labels[dataset_key]
+    return labels.get(dataset_key, "Search records")
 
 
 def search_dataset(df: pd.DataFrame, query: str, dataset_key: str) -> pd.DataFrame:
@@ -3213,10 +3214,11 @@ def dataset_option_map(df: pd.DataFrame, dataset_key: str) -> dict[str, object]:
         "lecturers": ["KELAS", "PENSYARAH"],
         "programs": ["NO MATRIK", "PROGRAM"],
         "results": ["NO MATRIK", "NAMA PELAJAR", "SPM_MATH", "SPM_ADDMATH"],
+        "planning": ["NO MATRIK", "TOV SEM 1", "SASARAN SEM 1", "TOV SEM 2", "SASARAN SEM 2"],
         "assessments": ["UJIAN", "KATEGORI", "SUBJEK"],
     }
     for _, row in df.iterrows():
-        parts = [field_value(row, column) for column in label_columns[dataset_key]]
+        parts = [field_value(row, column) for column in label_columns.get(dataset_key, df.columns.tolist())]
         label = " | ".join(part for part in parts if part)
         options[label or str(row["id"])] = row["id"]
     return options

@@ -1200,7 +1200,7 @@ def planning_cgpa_group_table(
 
     frame = records[[group_column, tov_column, target_column]].copy()
     if group_column == "PENSYARAH":
-        frame[group_column] = frame[group_column].apply(split_multi_value)
+        frame[group_column] = frame[group_column].apply(split_people)
         frame = frame.explode(group_column)
     frame[group_column] = frame[group_column].replace({None: pd.NA}).astype("string").str.strip()
     frame = frame[frame[group_column].notna() & (frame[group_column] != "")]

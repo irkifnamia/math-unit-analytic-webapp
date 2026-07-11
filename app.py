@@ -95,6 +95,7 @@ DATASET_OPTIONS = {
     "Lecturers": "lecturers",
     "Programs": "programs",
     "Results": "results",
+    "Planning": "planning",
     "Assessments": "assessments",
 }
 DATASET_SEARCH_COLUMNS = {
@@ -102,6 +103,7 @@ DATASET_SEARCH_COLUMNS = {
     "lecturers": ["KELAS", "PENSYARAH"],
     "programs": ["NO MATRIK", "PROGRAM"],
     "results": ["NO MATRIK", "NAMA PELAJAR", "SPM_MATH", "SPM_ADDMATH"],
+    "planning": ["NO MATRIK", "TOV SEM 1", "SASARAN SEM 1", "TOV SEM 2", "SASARAN SEM 2"],
     "assessments": ["UJIAN", "KATEGORI", "SUBJEK"],
 }
 SPM_CGPA_MAP = {
@@ -3180,7 +3182,7 @@ def validate_selected_import_frame(
             elif is_spm_assessment(column):
                 if value not in SPM_GRADE_ORDER:
                     errors.append(f"Row {upload_row_number}: {column} must be one of {', '.join(SPM_GRADE_ORDER)}")
-            elif is_pspm_assessment(column):
+            elif is_pspm_assessment(column) or is_planning_assessment(column):
                 if value not in PSPM_GRADE_ORDER:
                     errors.append(f"Row {upload_row_number}: {column} must be one of {', '.join(PSPM_GRADE_ORDER)}")
 

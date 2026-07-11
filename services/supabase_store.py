@@ -81,6 +81,7 @@ RESULTS_WRITABLE_COLUMNS = [
     "PSPM_SEM1",
     "PSPM_SEM2",
 ]
+PLANNING_WRITABLE_COLUMNS = ["NO MATRIK", "TOV SEM 1", "SASARAN SEM 1", "TOV SEM 2", "SASARAN SEM 2"]
 ASSESSMENTS_WRITABLE_COLUMNS = ["UJIAN", "KATEGORI", "SUBJEK"]
 EDIT_HISTORY_COLUMNS = [
     "id",
@@ -342,6 +343,18 @@ class SupabaseStore:
                 ordered = [column for column in ASSESSMENTS_WRITABLE_COLUMNS if column in columns]
                 extras = [column for column in columns if column not in ordered]
                 return ASSESSMENTS_TABLE, [*ordered, *extras]
+        if key == "planning":
+            planning = self.get_planning_data()
+            if not planning.empty:
+                columns = [
+                    column
+                    for column in planning.columns.tolist()
+                    if column not in ["id", "created_at", "updated_at"]
+                ]
+                columns = unique_columns(columns)
+                ordered = [column for column in PLANNING_WRITABLE_COLUMNS if column in columns]
+                extras = [column for column in columns if column not in ordered]
+                return PLANNING_TABLE, [*ordered, *extras]
         return reference_table_and_columns(key)
 
     def bulk_upsert_records(self, df: pd.DataFrame) -> tuple[int, int]:
@@ -1299,17 +1312,19 @@ def reference_table_and_columns(key: str) -> tuple[str, list[str]]:
         return RESULTS_TABLE, RESULTS_WRITABLE_COLUMNS
     if key == "assessments":
         return ASSESSMENTS_TABLE, ASSESSMENTS_WRITABLE_COLUMNS
-    raise ValueError("Only existing Supabase tables can be edited: students, lecturers, programs, results, assessments.")
+    if key == "planning":
+        return PLANNING_TABLE, PLANNING_WRITABLE_COLUMNS
+    raise ValueError("Only existing Supabase tables can be edited: students, lecturers, programs, results, assessments, planning.")
 
 
 def natural_key_column(key: str) -> str:
-    if key in ["students", "programs", "results"]:
+    if key in ["students", "programs", "results", "planning"]:
         return "NO MATRIK"
     if key == "lecturers":
         return "KELAS"
     if key == "assessments":
         return "UJIAN"
-    raise ValueError("Only existing Supabase tables can be edited: students, lecturers, programs, results, assessments.")
+    raise ValueError("Only existing Supabase tables can be edited: students, lecturers, programs, results, assessments, planning.")
 
 
 def scope_lecturer_records(records: pd.DataFrame, user: dict[str, Any]) -> pd.DataFrame:
@@ -1376,6 +1391,7 @@ def required_import_columns(dataset_key: str, match_column: str | None = None) -
         "programs": ["NO MATRIK", "PROGRAM"],
         "results": ["NO MATRIK"],
         "assessments": ["UJIAN"],
+        "planning": ["NO MATRIK"],
     }
     return required[dataset_key]
 

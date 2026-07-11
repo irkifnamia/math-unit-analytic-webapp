@@ -2147,7 +2147,12 @@ def download_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> No
     )
 
     filtered = records.copy()
-    filtered = apply_detailed_info_assessment_filters(filtered)
+    try:
+        filtered = apply_detailed_info_assessment_filters(filtered)
+    except Exception as exc:
+        st.error("Assessment filters could not be loaded. The download preview below is using the global filters only.")
+        st.caption(str(exc))
+        filtered = records.copy()
 
     search_text = st.text_input(
         "Search rows",

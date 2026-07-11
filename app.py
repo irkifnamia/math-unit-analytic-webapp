@@ -2221,38 +2221,49 @@ def apply_detailed_info_mark_filters(
         return filtered
 
     st.markdown("**Mark Filters**")
-    for group_label, columns in grouped_columns.items():
-        st.caption(group_label.upper())
-        for row_start in range(0, len(columns), 4):
-            row_columns = st.columns(4)
-            for layout_column, column in zip(row_columns, columns[row_start : row_start + 4]):
-                with layout_column:
-                    scores = pd.to_numeric(source[column], errors="coerce").dropna()
-                    st.caption(column)
-                    range_columns = st.columns(2)
-                    with range_columns[0]:
-                        selected_min = st.number_input(
-                            "From",
-                            min_value=0,
-                            max_value=100,
-                            value=0,
-                            step=1,
-                            key=f"detailed_info_mark_min_{safe_key(group_label)}_{column}",
-                        )
-                    with range_columns[1]:
-                        selected_max = st.number_input(
-                            "To",
-                            min_value=0,
-                            max_value=100,
-                            value=100,
-                            step=1,
-                            key=f"detailed_info_mark_max_{safe_key(group_label)}_{column}",
-                        )
-                    if not scores.empty:
-                        lower = min(selected_min, selected_max)
-                        upper = max(selected_min, selected_max)
-                        column_scores = pd.to_numeric(filtered[column], errors="coerce")
-                        filtered = filtered[column_scores.between(lower, upper, inclusive="both")]
+    group_items = list(grouped_columns.items())
+    if len(group_items) == 1:
+        group_label, columns = group_items[0]
+        filtered = render_detailed_info_mark_filter_group(source, filtered, group_label, columns)
+        return filtered
+
+    tabs = st.tabs([group_label for group_label, _ in group_items])
+    for tab, (group_label, columns) in zip(tabs, group_items):
+        with tab:
+            filtered = render_detailed_info_mark_filter_group(source, filtered, group_label, columns)
+    return filtered
+
+
+def render_detailed_info_mark_filter_group(
+    source: pd.DataFrame,
+    filtered: pd.DataFrame,
+    group_label: str,
+    columns: list[str],
+) -> pd.DataFrame:
+    st.caption(f"{group_label.upper()} MARK RANGE")
+    for row_start in range(0, len(columns), 4):
+        row_columns = st.columns(4)
+        for layout_column, column in zip(row_columns, columns[row_start : row_start + 4]):
+            with layout_column:
+                scores = pd.to_numeric(source[column], errors="coerce").dropna()
+                default_min = int(max(0, scores.min())) if not scores.empty else 0
+                default_max = int(min(100, scores.max())) if not scores.empty else 100
+                if default_min > default_max:
+                    default_min, default_max = default_max, default_min
+
+                st.caption(column)
+                selected_min, selected_max = st.slider(
+                    "Range",
+                    min_value=0,
+                    max_value=100,
+                    value=(default_min, default_max),
+                    step=1,
+                    key=f"detailed_info_mark_range_{safe_key(group_label)}_{safe_key(column)}",
+                    label_visibility="collapsed",
+                )
+                if not scores.empty and (selected_min > 0 or selected_max < 100):
+                    column_scores = pd.to_numeric(filtered[column], errors="coerce")
+                    filtered = filtered[column_scores.between(selected_min, selected_max, inclusive="both")]
     return filtered
 
 

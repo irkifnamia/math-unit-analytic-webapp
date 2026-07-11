@@ -52,6 +52,11 @@ RESULT_COLUMNS = [
     "PSPM_SEM1",
     "PSPM_SEM2",
 ]
+PLANNING_COLUMNS = ["TOV SEM 1", "SASARAN SEM 1", "TOV SEM 2", "SASARAN SEM 2"]
+PLANNING_SEMESTERS = {
+    "SEMESTER 1": ("TOV SEM 1", "SASARAN SEM 1"),
+    "SEMESTER 2": ("TOV SEM 2", "SASARAN SEM 2"),
+}
 APP_USERS_TABLE = "app_users"
 APP_USERS_COLUMNS = [
     "id",
@@ -347,6 +352,7 @@ def sidebar_navigation(
         "DETAILED / DOWNLOAD",
         "SPM ANALYSIS",
         "PSPM ANALYSIS",
+        "TOV & TARGET ANALYSIS",
         "DIAGNOSTIC ANALYSIS",
         "EVALUATION ANALYSIS",
         "LECTURER PROGRESS",
@@ -356,6 +362,7 @@ def sidebar_navigation(
     navigation_labels = {
         "SPM ANALYSIS": "ANALYSIS : SPM",
         "PSPM ANALYSIS": "ANALYSIS : PSPM",
+        "TOV & TARGET ANALYSIS": "ANALYSIS : TOV & TARGET",
         "DIAGNOSTIC ANALYSIS": "ANALYSIS : DIAGNOSTIC",
         "EVALUATION ANALYSIS": "ANALYSIS : EVALUATION",
         "LECTURER PROGRESS": "PROGRESS : LECTURER",
@@ -1087,6 +1094,129 @@ def pspm_analysis_page(records: pd.DataFrame, user: dict, filters: dict[str, lis
         ],
         "pspm_analysis",
     )
+
+
+def tov_target_analysis_page(records: pd.DataFrame, user: dict) -> None:
+    page_header(
+        "TOV & TARGET ANALYSIS",
+        "Analyse TOV and target CGPA movement by semester.",
+        user["role"],
+    )
+    available_planning_columns = [column for column in PLANNING_COLUMNS if column in records.columns]
+    if not available_planning_columns:
+        blank_state("No planning columns are available yet. Check the Supabase planning table.")
+        return
+
+    planning_records = records.dropna(subset=available_planning_columns, how="all")
+    if planning_records.empty:
+        blank_state("No TOV or target grades match the selected filters.")
+        return
+
+    tabs = st.tabs(list(PLANNING_SEMESTERS.keys()))
+    for tab, (semester_label, columns) in zip(tabs, PLANNING_SEMESTERS.items()):
+        with tab:
+            render_tov_target_semester(planning_records, semester_label, columns)
+
+
+def render_tov_target_semester(
+    records: pd.DataFrame,
+    semester_label: str,
+    columns: tuple[str, str],
+) -> None:
+    tov_column, target_column = columns
+    missing_columns = [column for column in columns if column not in records.columns]
+    if missing_columns:
+        blank_state(f"{semester_label} cannot be shown because these planning columns are missing: {', '.join(missing_columns)}.")
+        return
+
+    semester_records = records.dropna(subset=[tov_column, target_column], how="all").copy()
+    if semester_records.empty:
+        blank_state(f"No planning grades are available for {semester_label}.")
+        return
+
+    cards = st.columns(2)
+    cards[0].metric(f"Average CGPA {tov_column}", format_planning_average_cgpa(semester_records, tov_column))
+    cards[1].metric(f"Average CGPA {target_column}", format_planning_average_cgpa(semester_records, target_column))
+
+    chart_section_heading(f"{tov_column} vs {target_column} (Grade)")
+    render_grade_matrix_heatmap(
+        semester_records,
+        tov_column,
+        target_column,
+        key=f"tov_target_matrix_{safe_key(semester_label)}",
+    )
+
+    left, right = st.columns(2)
+    with left:
+        chart_section_heading(f"Pensyarah CGPA - {semester_label}")
+        lecturer_table = planning_cgpa_group_table(
+            semester_records,
+            "PENSYARAH",
+            tov_column,
+            target_column,
+        )
+        render_data_table(
+            lecturer_table,
+            f"tov_target_{safe_key(semester_label)}_pensyarah",
+            f"TOV Target {semester_label} Pensyarah",
+        )
+    with right:
+        chart_section_heading(f"Kelas CGPA - {semester_label}")
+        class_table = planning_cgpa_group_table(
+            semester_records,
+            "KELAS",
+            tov_column,
+            target_column,
+        )
+        render_data_table(
+            class_table,
+            f"tov_target_{safe_key(semester_label)}_kelas",
+            f"TOV Target {semester_label} Kelas",
+        )
+
+
+def planning_cgpa_series(values: pd.Series) -> pd.Series:
+    return values.astype(str).str.strip().map(PSPM_CGPA_MAP)
+
+
+def format_planning_average_cgpa(records: pd.DataFrame, column: str) -> str:
+    if column not in records:
+        return "-"
+    cgpa = planning_cgpa_series(records[column]).dropna()
+    if cgpa.empty:
+        return "-"
+    return f"{cgpa.mean():.2f}"
+
+
+def planning_cgpa_group_table(
+    records: pd.DataFrame,
+    group_column: str,
+    tov_column: str,
+    target_column: str,
+) -> pd.DataFrame:
+    output_columns = [group_column, f"CGPA {tov_column}", f"CGPA {target_column}"]
+    if group_column not in records.columns:
+        return pd.DataFrame(columns=output_columns)
+
+    frame = records[[group_column, tov_column, target_column]].copy()
+    if group_column == "PENSYARAH":
+        frame[group_column] = frame[group_column].apply(split_multi_value)
+        frame = frame.explode(group_column)
+    frame[group_column] = frame[group_column].replace({None: pd.NA}).astype("string").str.strip()
+    frame = frame[frame[group_column].notna() & (frame[group_column] != "")]
+    if frame.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    frame[f"CGPA {tov_column}"] = planning_cgpa_series(frame[tov_column])
+    frame[f"CGPA {target_column}"] = planning_cgpa_series(frame[target_column])
+    table = (
+        frame.groupby(group_column, as_index=False)[[f"CGPA {tov_column}", f"CGPA {target_column}"]]
+        .mean()
+        .sort_values(f"CGPA {target_column}", ascending=False, na_position="last")
+    )
+    for column in [f"CGPA {tov_column}", f"CGPA {target_column}"]:
+        table[column] = pd.to_numeric(table[column], errors="coerce").round(2)
+    return table[output_columns]
 
 
 def centered_section_heading(title: str) -> None:
@@ -3666,6 +3796,10 @@ def is_pspm_assessment(column: str) -> bool:
     return str(column).upper().strip().startswith("PSPM")
 
 
+def is_planning_assessment(column: str) -> bool:
+    return str(column).upper().strip() in {value.upper() for value in PLANNING_COLUMNS}
+
+
 def is_diagnostic_assessment(column: str) -> bool:
     category = assessment_category_for_column(column)
     if category:
@@ -3722,7 +3856,7 @@ def grade_assessment_columns_from_records(records: pd.DataFrame) -> list[str]:
 def cgpa_grade_order_for_column(column: str) -> list[str]:
     if is_spm_assessment(column):
         return SPM_GRADE_ORDER
-    if is_pspm_assessment(column):
+    if is_pspm_assessment(column) or is_planning_assessment(column):
         return PSPM_GRADE_ORDER
     return GRADE_ORDER
 
@@ -3882,7 +4016,7 @@ def grade_matrix(
 def grade_order_for_column(column: str) -> list[str]:
     if is_spm_assessment(column):
         return SPM_GRADE_ORDER
-    if is_pspm_assessment(column):
+    if is_pspm_assessment(column) or is_planning_assessment(column):
         return PSPM_GRADE_ORDER
     return GRADE_ORDER
 
@@ -4010,7 +4144,7 @@ def render_grade_matrix_heatmap(
 def cgpa_map_for_column(column: str) -> dict[str, float]:
     if is_spm_assessment(column):
         return SPM_CGPA_MAP
-    if is_pspm_assessment(column):
+    if is_pspm_assessment(column) or is_planning_assessment(column):
         return PSPM_CGPA_MAP
     return {}
 
@@ -5071,6 +5205,8 @@ def main() -> None:
         "DETAILED / DOWNLOAD",
     ]:
         base_records = store.fetch_base_records(user, results_mode="all")
+    elif page in ["TOV & TARGET ANALYSIS"]:
+        base_records = store.fetch_base_records(user, results_mode="planning")
     elif page in ["DATA MANAGEMENT"]:
         base_records = store.fetch_base_records(user, results_mode="spm")
     records = store.filter_records(base_records, filters)
@@ -5082,6 +5218,8 @@ def main() -> None:
         results_dashboard(records, user, filters)
     elif page == "PSPM ANALYSIS":
         pspm_analysis_page(records, user, filters)
+    elif page == "TOV & TARGET ANALYSIS":
+        tov_target_analysis_page(records, user)
     elif page == "DIAGNOSTIC ANALYSIS":
         diagnostic_dashboard(records, user, filters)
     elif page == "EVALUATION ANALYSIS":

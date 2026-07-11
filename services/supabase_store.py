@@ -18,6 +18,7 @@ LECTURERS_TABLE = "lecturers"
 PROGRAMS_TABLE = "programs"
 RESULTS_TABLE = "results"
 ASSESSMENTS_TABLE = "assessments"
+PLANNING_TABLE = "planning"
 EDIT_HISTORY_TABLE = "edit_history"
 APP_USERS_TABLE = "app_users"
 UPLOAD_ROW_NUMBER_COLUMN = "_UPLOAD_ROW_NUMBER"
@@ -52,6 +53,16 @@ RESULTS_COLUMNS = [
     "PSPM_SEM2",
 ]
 ASSESSMENTS_COLUMNS = ["id", "created_at", "updated_at", "UJIAN", "KATEGORI", "SUBJEK"]
+PLANNING_COLUMNS = [
+    "id",
+    "created_at",
+    "updated_at",
+    "NO MATRIK",
+    "TOV SEM 1",
+    "SASARAN SEM 1",
+    "TOV SEM 2",
+    "SASARAN SEM 2",
+]
 SPM_RESULTS_COLUMNS = ["NO MATRIK", "SPM_ADDMATH", "SPM_MATH"]
 
 STUDENTS_WRITABLE_COLUMNS = ["NO MATRIK", "NAMA PELAJAR", "JURUSAN", "SISTEM", "KELAS", "SUBJEK"]
@@ -160,6 +171,11 @@ class SupabaseStore:
         self.last_errors.extend(errors)
         return assessments.copy()
 
+    def get_planning_data(self) -> pd.DataFrame:
+        planning, errors = get_cached_planning_data()
+        self.last_errors.extend(errors)
+        return planning.copy()
+
     def fetch_records(
         self,
         filters: dict[str, list[str]] | None = None,
@@ -187,6 +203,8 @@ class SupabaseStore:
         elif results_mode == "all":
             all_results = self.get_results_data()
             records = attach_results(records, all_results, all_results.columns.tolist() or RESULTS_COLUMNS)
+        elif results_mode == "planning":
+            records = attach_planning(records, self.get_planning_data())
 
         return records.sort_values(["NAMA PELAJAR"], ascending=[True], na_position="last")
 
@@ -544,11 +562,19 @@ def get_cached_assessments_data() -> tuple[pd.DataFrame, list[str]]:
     return assessments, errors
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def get_cached_planning_data() -> tuple[pd.DataFrame, list[str]]:
+    errors: list[str] = []
+    planning = select_all_table_frame(get_client(), PLANNING_TABLE, errors, fallback_columns=PLANNING_COLUMNS)
+    return planning, errors
+
+
 def clear_cached_reference_data() -> None:
     get_cached_core_reference_data.clear()
     get_cached_spm_results_data.clear()
     get_cached_results_data.clear()
     get_cached_assessments_data.clear()
+    get_cached_planning_data.clear()
 
 
 def fetch_table_frame(
@@ -677,6 +703,36 @@ def attach_results(
         .first()
     )
     merged = students.merge(compact_results, on="NO MATRIK", how="left")
+    for column in display_columns:
+        if column not in merged:
+            merged[column] = None
+    return merged
+
+
+def attach_planning(students: pd.DataFrame, planning: pd.DataFrame) -> pd.DataFrame:
+    planning_columns = [column for column in PLANNING_COLUMNS if column not in ["id", "created_at", "updated_at"]]
+    display_columns = [column for column in planning_columns if column != "NO MATRIK"]
+    if planning.empty:
+        for column in display_columns:
+            if column not in students:
+                students[column] = None
+        return students
+
+    available_columns = [column for column in planning_columns if column in planning.columns]
+    if "NO MATRIK" not in available_columns:
+        for column in display_columns:
+            if column not in students:
+                students[column] = None
+        return students
+
+    compact_planning = (
+        planning[available_columns]
+        .replace("", pd.NA)
+        .dropna(subset=["NO MATRIK"])
+        .groupby("NO MATRIK", as_index=False)
+        .first()
+    )
+    merged = students.merge(compact_planning, on="NO MATRIK", how="left")
     for column in display_columns:
         if column not in merged:
             merged[column] = None

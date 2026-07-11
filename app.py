@@ -450,13 +450,8 @@ def data_updated_label(store: SupabaseStore, base_records: pd.DataFrame) -> str:
         pass
 
     latest = latest_timestamp_from_frames(frames)
-    app_update = st.session_state.get("app_data_updated_at")
-    if isinstance(app_update, datetime):
-        app_update = malaysia_datetime(app_update)
-        latest = app_update if latest is None or app_update > latest else latest
     if latest is None:
-        loaded_at = st.session_state.setdefault("data_loaded_at", datetime.now(APP_TIMEZONE))
-        return loaded_at.strftime("%A, %d %B %Y, %I:%M %p")
+        return "No Supabase timestamp available"
     return latest.strftime("%A, %d %B %Y, %I:%M %p")
 
 
@@ -3069,7 +3064,6 @@ def set_data_management_success(message: str) -> None:
     st.session_state["data_management_success"] = message
     st.session_state["data_management_success_persist"] = message
     st.session_state["supabase_data_dirty"] = True
-    st.session_state["app_data_updated_at"] = datetime.now(APP_TIMEZONE)
 
 
 def app_users_setup_sql() -> str:

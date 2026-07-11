@@ -156,6 +156,7 @@ class SupabaseStore:
         refs = self.get_core_reference_data()
         refs["results"] = self.get_results_data()
         refs["assessments"] = self.get_assessments_data()
+        refs["planning"] = self.get_planning_data()
         return refs
 
     def get_core_reference_data(self) -> dict[str, pd.DataFrame]:

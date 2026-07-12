@@ -206,6 +206,10 @@ class SupabaseStore:
         elif results_mode == "all":
             all_results = self.get_results_data()
             records = attach_results(records, all_results, all_results.columns.tolist() or RESULTS_COLUMNS)
+        elif results_mode == "all_with_planning":
+            all_results = self.get_results_data()
+            records = attach_results(records, all_results, all_results.columns.tolist() or RESULTS_COLUMNS)
+            records = attach_planning(records, self.get_planning_data())
         elif results_mode == "planning":
             records = attach_planning(records, self.get_planning_data())
 

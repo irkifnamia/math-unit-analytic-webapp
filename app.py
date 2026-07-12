@@ -1883,6 +1883,7 @@ def student_profile_section(records: pd.DataFrame) -> None:
     )
     render_profile_spm_cards(student_records, average=False)
     render_profile_pspm_grade_cards(student_records)
+    render_profile_planning_grade_cards(student_records)
     render_profile_pspm_dm_progress(student_records, "PSPM DM015 vs PSPM DM025 CGPA")
     render_profile_pspm_sem_progress(student_records, "PSPM SEM1 vs PSPM SEM2 CGPA")
     render_profile_diagnostic_progress(
@@ -1916,6 +1917,7 @@ def class_profile_section(records: pd.DataFrame) -> None:
     )
     render_profile_spm_cards(class_records, average=True)
     render_profile_pspm_all_cards(class_records)
+    render_profile_planning_cgpa_cards(class_records)
     render_profile_pspm_dm_progress(class_records, "Average CGPA: PSPM DM015 vs PSPM DM025")
     render_profile_pspm_sem_progress(class_records, "Average CGPA: PSPM SEM1 vs PSPM SEM2")
     render_profile_diagnostic_progress(
@@ -1980,6 +1982,8 @@ def lecturer_profile_section(records: pd.DataFrame, lecturer_refs: pd.DataFrame 
     render_profile_spm_cards(lecturer_records, average=True)
     render_profile_pspm_dm_cards(lecturer_records)
     render_profile_pspm_sem_cards(lecturer_records)
+    render_profile_planning_cgpa_cards(lecturer_records)
+    render_profile_planning_matrices(lecturer_records, selected_lecturer)
     render_profile_pspm_sem_progress(lecturer_records, "Average CGPA: PSPM SEM1 vs PSPM SEM2")
     render_profile_diagnostic_progress(
         lecturer_records,
@@ -2060,6 +2064,57 @@ def render_profile_pspm_grade_cards(records: pd.DataFrame) -> None:
     }
     if cards:
         profile_info_cards(cards)
+
+
+def render_profile_planning_grade_cards(records: pd.DataFrame) -> None:
+    cards = {
+        f"{column} Grade": first_nonempty_value(records[column])
+        for column in PLANNING_COLUMNS
+        if column in records
+    }
+    if cards:
+        profile_info_cards(cards, columns_per_row=4)
+
+
+def render_profile_planning_cgpa_cards(records: pd.DataFrame) -> None:
+    cards = {
+        f"CGPA {column}": format_planning_average_cgpa(records, column)
+        for column in PLANNING_COLUMNS
+        if column in records
+    }
+    if cards:
+        profile_info_cards(cards, columns_per_row=4)
+
+
+def render_profile_planning_matrices(records: pd.DataFrame, lecturer_name: str) -> None:
+    if records.empty:
+        return
+    matrix_pairs = [
+        ("SEM 1", "TOV SEM 1", "SASARAN SEM 1"),
+        ("SEM 2", "TOV SEM 2", "SASARAN SEM 2"),
+    ]
+    available_pairs = [
+        (label, tov_column, target_column)
+        for label, tov_column, target_column in matrix_pairs
+        if tov_column in records.columns and target_column in records.columns
+    ]
+    if not available_pairs:
+        return
+
+    columns = st.columns(len(available_pairs))
+    for index, (label, tov_column, target_column) in enumerate(available_pairs):
+        with columns[index]:
+            chart_section_heading(f"{label}: {tov_column} to {target_column}")
+            matrix_records = records.dropna(subset=[tov_column, target_column], how="all")
+            if matrix_records.empty:
+                blank_state(f"No TOV or target grade data available for {label}.")
+                continue
+            render_grade_matrix_heatmap(
+                matrix_records,
+                tov_column,
+                target_column,
+                key=f"profile_planning_matrix_{safe_key(lecturer_name)}_{safe_key(label)}",
+            )
 
 
 def render_profile_pspm_dm_progress(records: pd.DataFrame, title: str) -> None:
@@ -5224,10 +5279,11 @@ def main() -> None:
         "LECTURER PROGRESS",
         "CLASS PROGRESS",
         "PROGRAM PROGRESS",
-        "PROFILING",
         "DETAILED / DOWNLOAD",
     ]:
         base_records = store.fetch_base_records(user, results_mode="all")
+    elif page in ["PROFILING"]:
+        base_records = store.fetch_base_records(user, results_mode="all_with_planning")
     elif page in ["TOV & TARGET ANALYSIS"]:
         base_records = store.fetch_base_records(user, results_mode="planning")
     elif page in ["DATA MANAGEMENT"]:

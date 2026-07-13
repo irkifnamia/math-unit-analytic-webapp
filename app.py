@@ -1496,100 +1496,36 @@ def render_mark_assessment_analysis(
             selected_assessment = str(heatmap_selection.iloc[0].get("Test", "")).strip() or selected_assessment
             remember_analysis_selection(page_key, "jurusan_heatmap", heatmap_selection)
 
+    selected_distribution_test = mark_test_selector(
+        mark_columns,
+        key=f"{label}_{subject}_distribution_test",
+        label="Select Test for Score Distribution and Top 5 Classes",
+    )
+    selected_test_long = assessment_long[
+        assessment_long["Test"].astype(str).str.strip() == selected_distribution_test
+    ].copy()
     left, right = st.columns(2)
     with left:
-        fig = px.box(
-            assessment_long,
-            x="Test",
-            y="Score",
-            points=False,
-            title="Score Distribution",
-            category_orders={"Test": mark_columns},
-            color_discrete_sequence=["#0f766e"],
+        score_selection = render_mark_histogram(
+            selected_test_long,
+            selected_distribution_test,
+            key=f"{label}_{subject}_{selected_distribution_test}_score_distribution",
         )
-        fig.update_layout(height=420, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=55, b=20), clickmode="event+select")
-        try:
-            event = st.plotly_chart(
-                fig,
-                use_container_width=True,
-                key=f"{label}_{subject}_score_distribution",
-                on_select="rerun",
-                selection_mode="points",
-            )
-        except TypeError:
-            st.plotly_chart(fig, use_container_width=True, key=f"{label}_{subject}_score_distribution")
-            event = None
-        points = selected_plotly_points(event)
-        if points:
-            selected_test = str(points[0].get("x", "")).strip()
-            if selected_test:
-                score_selection = assessment_long[assessment_long["Test"].astype(str).str.strip() == selected_test].copy()
-                selected_frame = first_non_empty_frame(score_selection, selected_frame)
-                if not score_selection.empty:
-                    selected_assessment = selected_test
-                    remember_analysis_selection(page_key, "score_distribution", score_selection)
+        selected_frame = first_non_empty_frame(score_selection, selected_frame)
+        if score_selection is not None and not score_selection.empty:
+            selected_assessment = selected_distribution_test
+            remember_analysis_selection(page_key, "score_distribution", score_selection)
 
     with right:
-        top_classes = (
-            assessment_long.groupby(["Test", "KELAS"], as_index=False)["Score"]
-            .mean()
-            .dropna(subset=["Score"])
+        class_selection = render_top_classes_for_test(
+            selected_test_long,
+            selected_distribution_test,
+            key=f"{label}_{subject}_{selected_distribution_test}_top_classes",
         )
-        top_classes = (
-            top_classes.sort_values(["Test", "Score"], ascending=[True, False])
-            .groupby("Test", group_keys=False)
-            .head(5)
-        )
-        top_classes["Score"] = top_classes["Score"].round(1)
-        fig = px.bar(
-            top_classes,
-            x="KELAS",
-            y="Score",
-            color="Test",
-            barmode="group",
-            text="Score",
-            title="Top 5 Classes",
-            category_orders={"Test": mark_columns},
-            color_discrete_sequence=["#28277f", "#0f766e", "#ef1c2a", "#facc15"],
-            custom_data=["Test", "KELAS"],
-        )
-        fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
-        fig.update_layout(
-            height=420,
-            yaxis_range=[0, 100],
-            xaxis_title="Class",
-            yaxis_title="Average Mark",
-            margin=dict(l=20, r=20, t=55, b=20),
-            clickmode="event+select",
-        )
-        try:
-            event = st.plotly_chart(
-                fig,
-                use_container_width=True,
-                key=f"{label}_{subject}_top_classes",
-                on_select="rerun",
-                selection_mode="points",
-            )
-        except TypeError:
-            st.plotly_chart(fig, use_container_width=True, key=f"{label}_{subject}_top_classes")
-            event = None
-        points = selected_plotly_points(event)
-        if points:
-            custom_data = points[0].get("customdata")
-            selected_test = ""
-            selected_class = ""
-            if isinstance(custom_data, (list, tuple)) and len(custom_data) >= 2:
-                selected_test = str(custom_data[0]).strip()
-                selected_class = str(custom_data[1]).strip()
-            if selected_test and selected_class:
-                class_selection = assessment_long[
-                    (assessment_long["Test"].astype(str).str.strip() == selected_test)
-                    & (assessment_long["KELAS"].astype(str).str.strip() == selected_class)
-                ].copy()
-                selected_frame = first_non_empty_frame(class_selection, selected_frame)
-                if not class_selection.empty:
-                    selected_assessment = selected_test
-                    remember_analysis_selection(page_key, "top_classes", class_selection)
+        selected_frame = first_non_empty_frame(class_selection, selected_frame)
+        if class_selection is not None and not class_selection.empty:
+            selected_assessment = selected_distribution_test
+            remember_analysis_selection(page_key, "top_classes", class_selection)
 
     render_analysis_filtered_record_table(
         records,
@@ -1715,6 +1651,146 @@ def render_mark_status_card(label: str, value: object, tone: str = "neutral") ->
         """,
         unsafe_allow_html=True,
     )
+
+
+def mark_test_selector(test_columns: list[str], key: str, label: str) -> str:
+    options = [column for column in test_columns if column]
+    if not options:
+        return ""
+    if hasattr(st, "segmented_control"):
+        selected = st.segmented_control(label, options, default=options[0], key=key)
+        return selected or options[0]
+    return st.radio(label, options, horizontal=True, key=key)
+
+
+def render_mark_histogram(records: pd.DataFrame, test_name: str, key: str) -> pd.DataFrame | None:
+    chart_section_heading("Score Distribution")
+    if records.empty:
+        empty_chart_placeholder("Score Distribution", f"No marks available for {test_name}.", height=420, key=key)
+        return None
+
+    frame = records.copy()
+    frame["Score"] = pd.to_numeric(frame["Score"], errors="coerce")
+    frame = frame.dropna(subset=["Score"])
+    if frame.empty:
+        empty_chart_placeholder("Score Distribution", f"No marks available for {test_name}.", height=420, key=key)
+        return None
+
+    labels = [f"{start}-{start + 4}" for start in range(0, 95, 5)] + ["95-100"]
+    clipped_scores = frame["Score"].clip(lower=0, upper=100)
+    interval_starts = ((clipped_scores // 5) * 5).astype(int).clip(upper=95)
+    frame["Mark Interval"] = interval_starts.map(
+        lambda start: f"{start}-{start + 4}" if start < 95 else "95-100"
+    )
+    distribution = (
+        frame.groupby("Mark Interval")
+        .agg(Students=("NO MATRIK", "nunique"))
+        .reindex(labels, fill_value=0)
+        .reset_index()
+        .rename(columns={"index": "Mark Interval"})
+    )
+    distribution["Mark Interval"] = distribution["Mark Interval"].astype(str)
+    fig = px.bar(
+        distribution,
+        x="Mark Interval",
+        y="Students",
+        text="Students",
+        title=f"{test_name} Score Distribution",
+        color_discrete_sequence=["#0f766e"],
+        custom_data=["Mark Interval"],
+    )
+    fig.update_traces(textposition="outside")
+    fig.update_layout(
+        height=420,
+        xaxis_title="Mark Interval",
+        yaxis_title="Students",
+        margin=dict(l=20, r=20, t=55, b=20),
+        clickmode="event+select",
+    )
+    try:
+        event = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            key=key,
+            on_select="rerun",
+            selection_mode="points",
+        )
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, key=key)
+        event = None
+
+    points = selected_plotly_points(event)
+    if not points:
+        return None
+    interval = str(points[0].get("x", "")).strip()
+    if not interval:
+        custom_data = points[0].get("customdata")
+        if isinstance(custom_data, (list, tuple)) and custom_data:
+            interval = str(custom_data[0]).strip()
+    if not interval:
+        return None
+    return frame[frame["Mark Interval"].astype(str) == interval].copy()
+
+
+def render_top_classes_for_test(records: pd.DataFrame, test_name: str, key: str) -> pd.DataFrame | None:
+    chart_section_heading("Top 5 Classes")
+    if records.empty:
+        empty_chart_placeholder("Top 5 Classes", f"No marks available for {test_name}.", height=420, key=key)
+        return None
+
+    top_classes = (
+        records.groupby("KELAS", as_index=False)["Score"]
+        .mean()
+        .dropna(subset=["Score"])
+        .sort_values("Score", ascending=False)
+        .head(5)
+    )
+    if top_classes.empty:
+        empty_chart_placeholder("Top 5 Classes", f"No class marks available for {test_name}.", height=420, key=key)
+        return None
+
+    top_classes["Score"] = top_classes["Score"].round(1)
+    fig = px.bar(
+        top_classes,
+        x="KELAS",
+        y="Score",
+        text="Score",
+        title=f"{test_name} Top 5 Classes",
+        color_discrete_sequence=["#28277f"],
+        custom_data=["KELAS"],
+    )
+    fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
+    fig.update_layout(
+        height=420,
+        yaxis_range=[0, 100],
+        xaxis_title="Class",
+        yaxis_title="Average Mark",
+        margin=dict(l=20, r=20, t=55, b=20),
+        clickmode="event+select",
+    )
+    try:
+        event = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            key=key,
+            on_select="rerun",
+            selection_mode="points",
+        )
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, key=key)
+        event = None
+
+    points = selected_plotly_points(event)
+    if not points:
+        return None
+    selected_class = str(points[0].get("x", "")).strip()
+    if not selected_class:
+        custom_data = points[0].get("customdata")
+        if isinstance(custom_data, (list, tuple)) and custom_data:
+            selected_class = str(custom_data[0]).strip()
+    if not selected_class:
+        return None
+    return records[records["KELAS"].astype(str).str.strip() == selected_class].copy()
 
 
 def render_mark_analysis_empty_template(test_columns: list[str], message: str, key_prefix: str) -> None:

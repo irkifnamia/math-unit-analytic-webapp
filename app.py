@@ -3312,7 +3312,7 @@ def is_whole_number_assessment(column: str) -> bool:
     return (
         is_diagnostic_assessment(column)
         or is_evaluation_assessment(column)
-        or normalized.startswith(("AMAT", "TOP", "EVSM", "EVDM"))
+        or normalized.startswith(("AMAT", "TOP", "EVSM", "EVDM", "DT", "CM", "CMP", "MS"))
     )
 
 

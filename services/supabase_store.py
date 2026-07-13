@@ -795,7 +795,7 @@ def clean_payload(
 
 def is_whole_number_result_column(column: str) -> bool:
     normalized = str(column).upper().strip()
-    return normalized.startswith(("AMAT", "TOP", "EVSM", "EVDM"))
+    return normalized.startswith(("AMAT", "TOP", "EVSM", "EVDM", "DT", "CM", "CMP", "MS"))
 
 
 def normalize_whole_number(value: Any, column: str) -> int:

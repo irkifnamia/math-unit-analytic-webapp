@@ -1339,7 +1339,7 @@ def render_mark_assessment_analysis(
         return
     assessment_long = assessment_long_frame(records, mark_columns)
 
-    render_average_mark_cards(assessment_long, mark_columns)
+    render_average_mark_cards(records, assessment_long, mark_columns)
     if assessment_long.empty:
         render_mark_analysis_empty_template(
             mark_columns,
@@ -1633,7 +1633,7 @@ def assessment_subjects_for_category(records: pd.DataFrame, filters: dict[str, l
     return sort_subjects([*discovered, "SM", "DM", "AM"])
 
 
-def render_average_mark_cards(assessment_long: pd.DataFrame, test_columns: list[str]) -> None:
+def render_average_mark_cards(records: pd.DataFrame, assessment_long: pd.DataFrame, test_columns: list[str]) -> None:
     if not test_columns:
         return
     if assessment_long.empty or "Test" not in assessment_long.columns or "Score" not in assessment_long.columns:
@@ -1645,11 +1645,76 @@ def render_average_mark_cards(assessment_long: pd.DataFrame, test_columns: list[
         column: summary.loc[summary["Test"] == column, "Score"].dropna().mean()
         for column in test_columns
     }
-    cards = st.columns(max(1, min(len(test_columns), 4)))
+    card_count = max(1, min(len(test_columns) * 2, 4))
+    cards = st.columns(card_count)
     for index, column in enumerate(test_columns):
         value = values.get(column)
         label = "-" if pd.isna(value) else f"{value:.1f}"
-        cards[index % len(cards)].metric(f"{column} Average", label)
+        no_mark_count = missing_mark_student_count(records, column)
+        with cards[(index * 2) % len(cards)]:
+            render_mark_status_card(f"{column} Average", label, "neutral")
+        with cards[(index * 2 + 1) % len(cards)]:
+            render_mark_status_card(
+                f"{column} NO MARK",
+                f"{no_mark_count:,}",
+                "success" if no_mark_count == 0 else "danger",
+            )
+
+
+def missing_mark_student_count(records: pd.DataFrame, column: str) -> int:
+    if records.empty:
+        return 0
+    if "NO MATRIK" in records.columns:
+        frame = records.drop_duplicates("NO MATRIK").copy()
+    else:
+        frame = records.copy()
+    if column not in frame.columns:
+        return len(frame)
+    values = frame[column]
+    text = values.astype("string").str.strip()
+    nullish = values.isna() | text.isna() | text.eq("") | text.str.lower().isin(NULL_UPLOAD_VALUES)
+    numeric = pd.to_numeric(values, errors="coerce")
+    return int((nullish | numeric.isna()).sum())
+
+
+def render_mark_status_card(label: str, value: object, tone: str = "neutral") -> None:
+    palettes = {
+        "neutral": ("#ffffff", "#28277f", "#d8deef", "#020617"),
+        "danger": ("#fee2e2", "#dc2626", "#fecaca", "#7f1d1d"),
+        "success": ("#dcfce7", "#16a34a", "#bbf7d0", "#14532d"),
+    }
+    background, accent, border, ink = palettes.get(tone, palettes["neutral"])
+    st.markdown(
+        f"""
+        <div style="
+            min-height: 112px;
+            padding: 1rem 1.05rem;
+            border: 1px solid {border};
+            border-left: 5px solid {accent};
+            border-radius: 8px;
+            background: {background};
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+            margin-bottom: 0.9rem;
+        ">
+            <div style="
+                color: {ink};
+                font-size: 0.78rem;
+                font-weight: 800;
+                line-height: 1.2;
+                text-transform: uppercase;
+                overflow-wrap: anywhere;
+            ">{escape(str(label))}</div>
+            <div style="
+                color: {ink};
+                font-size: 2rem;
+                font-weight: 750;
+                line-height: 1.1;
+                margin-top: 0.7rem;
+            ">{escape(str(value))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_mark_analysis_empty_template(test_columns: list[str], message: str, key_prefix: str) -> None:

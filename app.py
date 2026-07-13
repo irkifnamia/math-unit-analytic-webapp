@@ -1581,18 +1581,17 @@ def render_average_mark_cards(records: pd.DataFrame, assessment_long: pd.DataFra
         column: summary.loc[summary["Test"] == column, "Score"].dropna().mean()
         for column in test_columns
     }
-    card_count = max(1, min(len(test_columns) * 2, 8))
+    card_count = max(1, min(len(test_columns), 8))
     cards = st.columns(card_count)
     for index, column in enumerate(test_columns):
         value = values.get(column)
-        label = "-" if pd.isna(value) else f"{value:.1f}"
+        average_label = "-" if pd.isna(value) else f"{value:.1f}"
         no_mark_count = missing_mark_student_count(records, column)
-        with cards[(index * 2) % len(cards)]:
-            render_mark_status_card(f"{column} Average", label, "neutral")
-        with cards[(index * 2 + 1) % len(cards)]:
+        with cards[index % len(cards)]:
             render_mark_status_card(
-                f"{column} NO MARK",
-                f"{no_mark_count:,}",
+                column,
+                average_label,
+                no_mark_count,
                 "success" if no_mark_count == 0 else "danger",
             )
 
@@ -1613,7 +1612,7 @@ def missing_mark_student_count(records: pd.DataFrame, column: str) -> int:
     return int((nullish | numeric.isna()).sum())
 
 
-def render_mark_status_card(label: str, value: object, tone: str = "neutral") -> None:
+def render_mark_status_card(test_name: str, average_value: object, no_mark_count: int, tone: str = "neutral") -> None:
     palettes = {
         "neutral": ("#ffffff", "#28277f", "#d8deef", "#020617"),
         "danger": ("#fee2e2", "#dc2626", "#fecaca", "#7f1d1d"),
@@ -1623,8 +1622,8 @@ def render_mark_status_card(label: str, value: object, tone: str = "neutral") ->
     st.markdown(
         f"""
         <div style="
-            min-height: 96px;
-            padding: 0.8rem 0.85rem;
+            min-height: 118px;
+            padding: 0.82rem 0.86rem;
             border: 1px solid {border};
             border-left: 5px solid {accent};
             border-radius: 8px;
@@ -1639,14 +1638,17 @@ def render_mark_status_card(label: str, value: object, tone: str = "neutral") ->
                 line-height: 1.2;
                 text-transform: uppercase;
                 overflow-wrap: anywhere;
-            ">{escape(str(label))}</div>
-            <div style="
-                color: {ink};
-                font-size: clamp(1.18rem, 1.75vw, 1.7rem);
-                font-weight: 750;
-                line-height: 1.1;
-                margin-top: 0.55rem;
-            ">{escape(str(value))}</div>
+            ">{escape(str(test_name))}</div>
+            <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:0.7rem; margin-top:0.72rem;">
+                <div>
+                    <div style="color:{ink}; opacity:0.78; font-size:0.64rem; font-weight:800; text-transform:uppercase;">Average</div>
+                    <div style="color:{ink}; font-size:clamp(1.12rem, 1.65vw, 1.55rem); font-weight:800; line-height:1.08;">{escape(str(average_value))}</div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="color:{ink}; opacity:0.78; font-size:0.64rem; font-weight:800; text-transform:uppercase;">No Mark</div>
+                    <div style="color:{ink}; font-size:clamp(1.12rem, 1.65vw, 1.55rem); font-weight:800; line-height:1.08;">{escape(f"{no_mark_count:,}")}</div>
+                </div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,

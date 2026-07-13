@@ -1335,6 +1335,7 @@ def render_mark_assessment_analysis(
             [],
             f"No {label} tests have been configured for {subject} yet.",
             key_prefix=f"{category}_{subject}_no_tests",
+            subject=subject,
         )
         return
     assessment_long = assessment_long_frame(records, mark_columns)
@@ -1345,6 +1346,7 @@ def render_mark_assessment_analysis(
             mark_columns,
             f"Marks for {subject} {label} tests are not available yet.",
             key_prefix=f"{category}_{subject}_no_marks",
+            subject=subject,
         )
         render_analysis_filtered_record_table(
             records,
@@ -1356,145 +1358,127 @@ def render_mark_assessment_analysis(
 
     selected_frame: pd.DataFrame | None = None
     selected_assessment: str | None = None
-    left, right = st.columns(2)
-    with left:
-        heatmap_selection = render_average_heatmap(
-            assessment_long,
-            index_column="PROGRAM",
-            test_columns=mark_columns,
-            title="Comparison Between Program",
-            yaxis_title="Program",
-            key=f"{label}_{subject}_program_heatmap",
-            return_selection=True,
-        )
-        selected_frame = first_non_empty_frame(heatmap_selection, selected_frame)
-        if heatmap_selection is not None and not heatmap_selection.empty:
-            selected_assessment = str(heatmap_selection.iloc[0].get("Test", "")).strip() or selected_assessment
-            remember_analysis_selection(page_key, "program_heatmap", heatmap_selection)
+    subject_code = str(subject).upper().strip()
+    show_program_comparison = subject_code not in {"DM", "AM"}
+    show_system_jurusan_comparison = subject_code != "AM"
 
-    with right:
-        class_progress = assessment_long.groupby(["KELAS", "Test"], as_index=False)["Score"].mean()
-        fig = px.line(
-            class_progress,
-            x="Test",
-            y="Score",
-            color="KELAS",
-            markers=True,
-            title="All Class Progress (Average Mark)",
-            category_orders={"Test": mark_columns},
-            custom_data=["KELAS", "Test"],
-        )
-        fig.update_layout(height=390, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=55, b=20), clickmode="event+select")
-        try:
-            event = st.plotly_chart(
-                fig,
-                use_container_width=True,
+    if show_program_comparison:
+        left, right = st.columns(2)
+        with left:
+            heatmap_selection = render_average_heatmap(
+                assessment_long,
+                index_column="PROGRAM",
+                test_columns=mark_columns,
+                title="Comparison Between Program",
+                yaxis_title="Program",
+                key=f"{label}_{subject}_program_heatmap",
+                return_selection=True,
+            )
+            selected_frame = first_non_empty_frame(heatmap_selection, selected_frame)
+            if heatmap_selection is not None and not heatmap_selection.empty:
+                selected_assessment = str(heatmap_selection.iloc[0].get("Test", "")).strip() or selected_assessment
+                remember_analysis_selection(page_key, "program_heatmap", heatmap_selection)
+
+        with right:
+            class_selection, class_test = render_class_progress_chart(
+                assessment_long,
+                mark_columns,
                 key=f"{label}_{subject}_class_progress",
-                on_select="rerun",
-                selection_mode="points",
             )
-        except TypeError:
-            st.plotly_chart(fig, use_container_width=True, key=f"{label}_{subject}_class_progress")
-            event = None
-        points = selected_plotly_points(event)
-        if points:
-            custom_data = points[0].get("customdata")
-            selected_class = ""
-            selected_test = ""
-            if isinstance(custom_data, (list, tuple)) and len(custom_data) >= 2:
-                selected_class = str(custom_data[0]).strip()
-                selected_test = str(custom_data[1]).strip()
-            if selected_class and selected_test:
-                class_selection = assessment_long[
-                    (assessment_long["KELAS"].astype(str).str.strip() == selected_class)
-                    & (assessment_long["Test"].astype(str).str.strip() == selected_test)
-                ].copy()
-                selected_frame = first_non_empty_frame(class_selection, selected_frame)
-                if not class_selection.empty:
-                    selected_assessment = selected_test
-                    remember_analysis_selection(page_key, "class_progress", class_selection)
-
-    left, right = st.columns(2)
-    with left:
-        sistem_long = assessment_long.copy()
-        sistem_long["SISTEM"] = system_bucket_series(sistem_long["SISTEM"])
-        sistem_long = sistem_long[sistem_long["SISTEM"].astype(str).str.strip() != ""]
-        sistem_heatmap = sistem_long.pivot_table(
-            index="Test",
-            columns="SISTEM",
-            values="Score",
-            aggfunc="mean",
-        ).reindex(index=mark_columns, columns=diagnostic_sistem_columns(subject))
-        fig = px.imshow(
-            sistem_heatmap.round(1),
-            aspect="auto",
-            text_auto=".1f",
-            color_continuous_scale="YlGnBu",
-            title="Comparison Between Sistem",
-            zmin=0,
-            zmax=100,
-        )
-        selectable_cells = (
-            sistem_heatmap.reset_index()
-            .melt(id_vars="Test", var_name="SISTEM", value_name="Score")
-            .dropna(subset=["Score"])
-        )
-        if not selectable_cells.empty:
-            fig.add_trace(
-                go.Scatter(
-                    x=selectable_cells["SISTEM"],
-                    y=selectable_cells["Test"],
-                    mode="markers",
-                    marker=dict(symbol="square", size=34, color="rgba(0,0,0,0.01)", line=dict(width=0)),
-                    customdata=selectable_cells[["Test", "SISTEM", "Score"]].to_numpy(),
-                    hovertemplate="Test: %{customdata[0]}<br>Sistem: %{customdata[1]}<br>Average Mark: %{customdata[2]:.1f}<extra></extra>",
-                    showlegend=False,
-                )
-            )
-        fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20), clickmode="event+select")
-        try:
-            event = st.plotly_chart(
-                fig,
-                use_container_width=True,
-                key=f"{label}_{subject}_sistem_heatmap",
-                on_select="rerun",
-                selection_mode="points",
-            )
-        except TypeError:
-            st.plotly_chart(fig, use_container_width=True, key=f"{label}_{subject}_sistem_heatmap")
-            event = None
-        points = selected_plotly_points(event)
-        if points:
-            selected_test = str(points[0].get("y", "")).strip()
-            selected_system = str(points[0].get("x", "")).strip()
-            custom_data = points[0].get("customdata")
-            if isinstance(custom_data, (list, tuple)) and len(custom_data) >= 2:
-                selected_test = str(custom_data[0]).strip()
-                selected_system = str(custom_data[1]).strip()
-            if selected_test and selected_system:
-                system_selection = assessment_long[
-                    (assessment_long["Test"].astype(str).str.strip() == selected_test)
-                    & (system_bucket_series(assessment_long["SISTEM"]) == selected_system)
-                ].copy()
-                selected_frame = first_non_empty_frame(system_selection, selected_frame)
-                if not system_selection.empty:
-                    selected_assessment = selected_test
-                    remember_analysis_selection(page_key, "sistem_heatmap", system_selection)
-
-    with right:
-        heatmap_selection = render_average_heatmap(
+    else:
+        class_selection, class_test = render_class_progress_chart(
             assessment_long,
-            index_column="JURUSAN",
-            test_columns=mark_columns,
-            title="Comparison Between Jurusan",
-            yaxis_title="Jurusan",
-            key=f"{label}_{subject}_jurusan_heatmap",
-            return_selection=True,
+            mark_columns,
+            key=f"{label}_{subject}_class_progress",
         )
-        selected_frame = first_non_empty_frame(heatmap_selection, selected_frame)
-        if heatmap_selection is not None and not heatmap_selection.empty:
-            selected_assessment = str(heatmap_selection.iloc[0].get("Test", "")).strip() or selected_assessment
-            remember_analysis_selection(page_key, "jurusan_heatmap", heatmap_selection)
+
+    selected_frame = first_non_empty_frame(class_selection, selected_frame)
+    if class_selection is not None and not class_selection.empty:
+        selected_assessment = class_test or selected_assessment
+        remember_analysis_selection(page_key, "class_progress", class_selection)
+
+    if show_system_jurusan_comparison:
+        left, right = st.columns(2)
+        with left:
+            sistem_long = assessment_long.copy()
+            sistem_long["SISTEM"] = system_bucket_series(sistem_long["SISTEM"])
+            sistem_long = sistem_long[sistem_long["SISTEM"].astype(str).str.strip() != ""]
+            sistem_heatmap = sistem_long.pivot_table(
+                index="Test",
+                columns="SISTEM",
+                values="Score",
+                aggfunc="mean",
+            ).reindex(index=mark_columns, columns=diagnostic_sistem_columns(subject))
+            fig = px.imshow(
+                sistem_heatmap.round(1),
+                aspect="auto",
+                text_auto=".1f",
+                color_continuous_scale="YlGnBu",
+                title="Comparison Between Sistem",
+                zmin=0,
+                zmax=100,
+            )
+            selectable_cells = (
+                sistem_heatmap.reset_index()
+                .melt(id_vars="Test", var_name="SISTEM", value_name="Score")
+                .dropna(subset=["Score"])
+            )
+            if not selectable_cells.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=selectable_cells["SISTEM"],
+                        y=selectable_cells["Test"],
+                        mode="markers",
+                        marker=dict(symbol="square", size=34, color="rgba(0,0,0,0.01)", line=dict(width=0)),
+                        customdata=selectable_cells[["Test", "SISTEM", "Score"]].to_numpy(),
+                        hovertemplate="Test: %{customdata[0]}<br>Sistem: %{customdata[1]}<br>Average Mark: %{customdata[2]:.1f}<extra></extra>",
+                        showlegend=False,
+                    )
+                )
+            fig.update_layout(height=360, margin=dict(l=20, r=20, t=55, b=20), clickmode="event+select")
+            try:
+                event = st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    key=f"{label}_{subject}_sistem_heatmap",
+                    on_select="rerun",
+                    selection_mode="points",
+                )
+            except TypeError:
+                st.plotly_chart(fig, use_container_width=True, key=f"{label}_{subject}_sistem_heatmap")
+                event = None
+            points = selected_plotly_points(event)
+            if points:
+                selected_test = str(points[0].get("y", "")).strip()
+                selected_system = str(points[0].get("x", "")).strip()
+                custom_data = points[0].get("customdata")
+                if isinstance(custom_data, (list, tuple)) and len(custom_data) >= 2:
+                    selected_test = str(custom_data[0]).strip()
+                    selected_system = str(custom_data[1]).strip()
+                if selected_test and selected_system:
+                    system_selection = assessment_long[
+                        (assessment_long["Test"].astype(str).str.strip() == selected_test)
+                        & (system_bucket_series(assessment_long["SISTEM"]) == selected_system)
+                    ].copy()
+                    selected_frame = first_non_empty_frame(system_selection, selected_frame)
+                    if not system_selection.empty:
+                        selected_assessment = selected_test
+                        remember_analysis_selection(page_key, "sistem_heatmap", system_selection)
+
+        with right:
+            heatmap_selection = render_average_heatmap(
+                assessment_long,
+                index_column="JURUSAN",
+                test_columns=mark_columns,
+                title="Comparison Between Jurusan",
+                yaxis_title="Jurusan",
+                key=f"{label}_{subject}_jurusan_heatmap",
+                return_selection=True,
+            )
+            selected_frame = first_non_empty_frame(heatmap_selection, selected_frame)
+            if heatmap_selection is not None and not heatmap_selection.empty:
+                selected_assessment = str(heatmap_selection.iloc[0].get("Test", "")).strip() or selected_assessment
+                remember_analysis_selection(page_key, "jurusan_heatmap", heatmap_selection)
 
     selected_distribution_test = mark_test_selector(
         mark_columns,
@@ -1795,21 +1779,81 @@ def render_top_classes_for_test(records: pd.DataFrame, test_name: str, key: str)
     return records[records["KELAS"].astype(str).str.strip() == selected_class].copy()
 
 
-def render_mark_analysis_empty_template(test_columns: list[str], message: str, key_prefix: str) -> None:
+def render_class_progress_chart(
+    assessment_long: pd.DataFrame,
+    mark_columns: list[str],
+    key: str,
+) -> tuple[pd.DataFrame | None, str | None]:
+    class_progress = assessment_long.groupby(["KELAS", "Test"], as_index=False)["Score"].mean()
+    fig = px.line(
+        class_progress,
+        x="Test",
+        y="Score",
+        color="KELAS",
+        markers=True,
+        title="All Class Progress (Average Mark)",
+        category_orders={"Test": mark_columns},
+        custom_data=["KELAS", "Test"],
+    )
+    fig.update_layout(height=390, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=55, b=20), clickmode="event+select")
+    try:
+        event = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            key=key,
+            on_select="rerun",
+            selection_mode="points",
+        )
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, key=key)
+        event = None
+    points = selected_plotly_points(event)
+    if not points:
+        return None, None
+
+    custom_data = points[0].get("customdata")
+    selected_class = ""
+    selected_test = ""
+    if isinstance(custom_data, (list, tuple)) and len(custom_data) >= 2:
+        selected_class = str(custom_data[0]).strip()
+        selected_test = str(custom_data[1]).strip()
+    if not selected_class or not selected_test:
+        return None, None
+    class_selection = assessment_long[
+        (assessment_long["KELAS"].astype(str).str.strip() == selected_class)
+        & (assessment_long["Test"].astype(str).str.strip() == selected_test)
+    ].copy()
+    return class_selection, selected_test
+
+
+def render_mark_analysis_empty_template(
+    test_columns: list[str],
+    message: str,
+    key_prefix: str,
+    subject: str,
+) -> None:
     if message:
         st.info(message)
 
-    left, right = st.columns(2)
-    with left:
-        empty_chart_placeholder("Comparison Between Program", "No marks available yet.", height=390, key=f"{key_prefix}_program")
-    with right:
+    subject_code = str(subject).upper().strip()
+    show_program_comparison = subject_code not in {"DM", "AM"}
+    show_system_jurusan_comparison = subject_code != "AM"
+
+    if show_program_comparison:
+        left, right = st.columns(2)
+        with left:
+            empty_chart_placeholder("Comparison Between Program", "No marks available yet.", height=390, key=f"{key_prefix}_program")
+        with right:
+            empty_chart_placeholder("All Class Progress (Average Mark)", "No marks available yet.", height=390, key=f"{key_prefix}_class_progress")
+    else:
         empty_chart_placeholder("All Class Progress (Average Mark)", "No marks available yet.", height=390, key=f"{key_prefix}_class_progress")
 
-    left, right = st.columns(2)
-    with left:
-        empty_chart_placeholder("Comparison Between Sistem", "No marks available yet.", height=360, key=f"{key_prefix}_sistem")
-    with right:
-        empty_chart_placeholder("Comparison Between Jurusan", "No marks available yet.", height=360, key=f"{key_prefix}_jurusan")
+    if show_system_jurusan_comparison:
+        left, right = st.columns(2)
+        with left:
+            empty_chart_placeholder("Comparison Between Sistem", "No marks available yet.", height=360, key=f"{key_prefix}_sistem")
+        with right:
+            empty_chart_placeholder("Comparison Between Jurusan", "No marks available yet.", height=360, key=f"{key_prefix}_jurusan")
 
     left, right = st.columns(2)
     with left:

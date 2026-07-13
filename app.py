@@ -1581,7 +1581,7 @@ def render_average_mark_cards(records: pd.DataFrame, assessment_long: pd.DataFra
         column: summary.loc[summary["Test"] == column, "Score"].dropna().mean()
         for column in test_columns
     }
-    card_count = max(1, min(len(test_columns) * 2, 4))
+    card_count = max(1, min(len(test_columns) * 2, 8))
     cards = st.columns(card_count)
     for index, column in enumerate(test_columns):
         value = values.get(column)
@@ -1623,18 +1623,18 @@ def render_mark_status_card(label: str, value: object, tone: str = "neutral") ->
     st.markdown(
         f"""
         <div style="
-            min-height: 112px;
-            padding: 1rem 1.05rem;
+            min-height: 96px;
+            padding: 0.8rem 0.85rem;
             border: 1px solid {border};
             border-left: 5px solid {accent};
             border-radius: 8px;
             background: {background};
             box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
-            margin-bottom: 0.9rem;
+            margin-bottom: 0.75rem;
         ">
             <div style="
                 color: {ink};
-                font-size: 0.78rem;
+                font-size: 0.68rem;
                 font-weight: 800;
                 line-height: 1.2;
                 text-transform: uppercase;
@@ -1642,10 +1642,10 @@ def render_mark_status_card(label: str, value: object, tone: str = "neutral") ->
             ">{escape(str(label))}</div>
             <div style="
                 color: {ink};
-                font-size: 2rem;
+                font-size: clamp(1.18rem, 1.75vw, 1.7rem);
                 font-weight: 750;
                 line-height: 1.1;
-                margin-top: 0.7rem;
+                margin-top: 0.55rem;
             ">{escape(str(value))}</div>
         </div>
         """,

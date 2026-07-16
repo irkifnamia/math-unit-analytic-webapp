@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 from html import escape
@@ -2405,7 +2405,7 @@ def render_profile_diagnostic_progress(records: pd.DataFrame, columns: list[str]
 
 
 def comparable_program_label(value: object) -> str:
-    return " ".join(str(value).replace("–", "-").replace("—", "-").split()).casefold()
+    return " ".join(str(value).replace("â€“", "-").replace("â€”", "-").split()).casefold()
 
 
 def strip_jurusan_from_program(records: pd.DataFrame) -> pd.DataFrame:
@@ -3402,23 +3402,31 @@ def validate_selected_import_frame(
     if not allowed_update_columns:
         errors.append("Choose at least one valid column to update.")
 
+    duplicate_match_errors = duplicate_match_value_errors(df, match_column)
+    if duplicate_match_errors:
+        errors.extend(duplicate_match_errors)
+
     for row_number, row in df.iterrows():
         upload_row_number = int(row.get(UPLOAD_ROW_NUMBER_COLUMN, row_number + 2))
         if row.get(match_column, "") == "":
             errors.append(f"Row {upload_row_number}: {match_column} is required")
         if match_column == "id" and row.get(match_column, ""):
-            record_id = pd.to_numeric(pd.Series([row.get(match_column)]), errors="coerce").iloc[0]
-            if pd.isna(record_id) or not float(record_id).is_integer():
+            record_id = parse_whole_number_upload_value(row.get(match_column))
+            if record_id is None:
                 errors.append(f"Row {upload_row_number}: id must be a whole number")
+            else:
+                df.at[row_number, match_column] = str(record_id)
         for column in allowed_update_columns:
             value = row.get(column, "")
             if is_nullable_upload_value(value):
                 df.at[row_number, column] = ""
                 continue
             if is_whole_number_assessment(column):
-                number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
-                if pd.isna(number) or not float(number).is_integer():
-                    errors.append(f"Row {upload_row_number}: {column} must be a whole number")
+                number = parse_whole_number_upload_value(value)
+                if number is None:
+                    errors.append(f"Row {upload_row_number}: {column} must be a number")
+                else:
+                    df.at[row_number, column] = str(number)
             elif is_spm_assessment(column):
                 if value not in SPM_GRADE_ORDER:
                     errors.append(f"Row {upload_row_number}: {column} must be one of {', '.join(SPM_GRADE_ORDER)}")
@@ -3434,6 +3442,47 @@ def is_nullable_upload_value(value: object) -> bool:
         return True
     text = str(value).strip()
     return text.lower() in NULL_UPLOAD_VALUES
+
+
+def duplicate_match_value_errors(df: pd.DataFrame, match_column: str, limit: int = 10) -> list[str]:
+    if match_column not in df.columns:
+        return []
+    match_values = df[match_column].fillna("").astype(str).str.strip()
+    non_empty = match_values[match_values != ""]
+    duplicated_values = non_empty[non_empty.duplicated(keep=False)]
+    if duplicated_values.empty:
+        return []
+
+    errors: list[str] = []
+    for value in duplicated_values.drop_duplicates().head(limit):
+        row_numbers = df.loc[match_values == value, UPLOAD_ROW_NUMBER_COLUMN].astype(int).tolist()
+        errors.append(
+            f"Duplicate {match_column} {value} appears in uploaded rows {format_import_row_numbers(row_numbers)}. "
+            "Keep only one row per match value before saving."
+        )
+    remaining = duplicated_values.drop_duplicates().shape[0] - limit
+    if remaining > 0:
+        errors.append(f"{remaining} more duplicate {match_column} value(s) found in the uploaded file.")
+    return errors
+
+
+def parse_whole_number_upload_value(value: object) -> int | float | None:
+    text = str(value).strip().replace(",", "")
+    for character in ("\ufeff", "\u200b", "\u200c", "\u200d", "\u2060"):
+        text = text.replace(character, "")
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+        text = text[1:-1].strip()
+    elif text.startswith("'"):
+        text = text[1:].strip()
+
+    number = pd.to_numeric(pd.Series([text]), errors="coerce").iloc[0]
+    if pd.isna(number):
+        return None
+    number_float = float(number)
+    nearest_integer = round(number_float)
+    if abs(number_float - nearest_integer) < 1e-9:
+        return int(nearest_integer)
+    return number_float
 
 
 def search_any_columns(df: pd.DataFrame, query: str, columns: list[str]) -> pd.DataFrame:
@@ -3479,7 +3528,7 @@ def dataset_form_fields(columns: list[str], selected_row: pd.Series | None) -> d
             payload[column] = ui_column.text_input(
                 column,
                 value=form_field_value(selected_row, column),
-                placeholder="Whole number only" if is_whole_number_assessment(column) else None,
+                placeholder="Numeric value" if is_whole_number_assessment(column) else None,
             )
     return payload
 
@@ -3514,7 +3563,7 @@ def render_table_download_menu(df: pd.DataFrame, file_stem: str, title: str) -> 
     with menu_cols[1]:
         stem = safe_key(file_stem) or "table"
         if hasattr(st, "popover"):
-            with st.popover("⋯", help="Download table"):
+            with st.popover("â‹¯", help="Download table"):
                 st.download_button(
                     "CSV",
                     df.to_csv(index=False).encode("utf-8-sig"),

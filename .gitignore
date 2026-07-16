@@ -20,3 +20,6 @@ database/*.db-journal
 
 # Mac
 .DS_Store
+
+# Local logs
+*.log

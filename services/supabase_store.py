@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -659,7 +659,7 @@ def select_all_table_frame(
 
 
 def comparable_label(value: Any) -> str:
-    return " ".join(str(value).replace("–", "-").replace("—", "-").split()).casefold()
+    return " ".join(str(value).replace("â€“", "-").replace("â€”", "-").split()).casefold()
 
 
 def is_jurusan_program_value(value: Any, jurusan_values: set[str]) -> bool:
@@ -798,13 +798,23 @@ def is_whole_number_result_column(column: str) -> bool:
     return normalized.startswith(("AMAT", "TOP", "EVSM", "EVDM", "DT", "CM", "CMP", "MS"))
 
 
-def normalize_whole_number(value: Any, column: str) -> int:
-    number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+def normalize_whole_number(value: Any, column: str) -> int | float:
+    text = str(value).strip().replace(",", "")
+    for character in ("\ufeff", "\u200b", "\u200c", "\u200d", "\u2060"):
+        text = text.replace(character, "")
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+        text = text[1:-1].strip()
+    elif text.startswith("'"):
+        text = text[1:].strip()
+
+    number = pd.to_numeric(pd.Series([text]), errors="coerce").iloc[0]
     if pd.isna(number):
-        raise ValueError(f"{column} must be a whole number.")
-    if not float(number).is_integer():
-        raise ValueError(f"{column} must be a whole number.")
-    return int(number)
+        raise ValueError(f"{column} must be a number.")
+    number_float = float(number)
+    nearest_integer = round(number_float)
+    if abs(number_float - nearest_integer) < 1e-9:
+        return int(nearest_integer)
+    return number_float
 
 
 def with_updated_at(payload: dict[str, Any], table_name: str) -> dict[str, Any]:

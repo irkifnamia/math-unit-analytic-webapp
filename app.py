@@ -1599,19 +1599,21 @@ def render_average_mark_cards(records: pd.DataFrame, assessment_long: pd.DataFra
         column: summary.loc[summary["Test"] == column, "Score"].dropna().mean()
         for column in test_columns
     }
-    card_count = max(1, min(len(test_columns), 8))
-    cards = st.columns(card_count)
-    for index, column in enumerate(test_columns):
-        value = values.get(column)
-        average_label = "-" if pd.isna(value) else f"{value:.1f}"
-        no_mark_count = missing_mark_student_count(records, column)
-        with cards[index % len(cards)]:
-            render_mark_status_card(
-                column,
-                average_label,
-                no_mark_count,
-                "success" if no_mark_count == 0 else "danger",
-            )
+    cards_per_row = 4 if len(test_columns) > 4 else max(1, len(test_columns))
+    for row_start in range(0, len(test_columns), cards_per_row):
+        row_columns = test_columns[row_start : row_start + cards_per_row]
+        cards = st.columns(len(row_columns))
+        for card, column in zip(cards, row_columns):
+            value = values.get(column)
+            average_label = "-" if pd.isna(value) else f"{value:.1f}"
+            no_mark_count = missing_mark_student_count(records, column)
+            with card:
+                render_mark_status_card(
+                    column,
+                    average_label,
+                    no_mark_count,
+                    "success" if no_mark_count == 0 else "danger",
+                )
 
 
 def missing_mark_student_count(records: pd.DataFrame, column: str) -> int:
@@ -2134,6 +2136,11 @@ def student_profile_section(records: pd.DataFrame) -> None:
         diagnostic_columns_from_records(student_records),
         "Diagnostic Mark Progress",
     )
+    render_profile_evaluation_progress(
+        student_records,
+        evaluation_columns_from_records(student_records),
+        "Evaluation Mark Progress",
+    )
 
 
 def class_profile_section(records: pd.DataFrame) -> None:
@@ -2167,6 +2174,11 @@ def class_profile_section(records: pd.DataFrame) -> None:
         class_records,
         diagnostic_columns_from_records(class_records),
         "Average Diagnostic Mark Progress",
+    )
+    render_profile_evaluation_progress(
+        class_records,
+        evaluation_columns_from_records(class_records),
+        "Average Evaluation Mark Progress",
     )
 
 
@@ -2232,6 +2244,11 @@ def lecturer_profile_section(records: pd.DataFrame, lecturer_refs: pd.DataFrame 
         lecturer_records,
         diagnostic_columns_from_records(lecturer_records),
         "Average Diagnostic Mark Progress",
+    )
+    render_profile_evaluation_progress(
+        lecturer_records,
+        evaluation_columns_from_records(lecturer_records),
+        "Average Evaluation Mark Progress",
     )
 
 
@@ -2441,23 +2458,86 @@ def render_profile_cgpa_progress(records: pd.DataFrame, columns: list[str], titl
 
 
 def render_profile_diagnostic_progress(records: pd.DataFrame, columns: list[str], title: str) -> None:
+    render_profile_mark_progress(
+        records,
+        columns,
+        title,
+        empty_label="diagnostic",
+        key_prefix="profile_diagnostic",
+        bar_color="#0f766e",
+        line_color="#28277f",
+    )
+
+
+def render_profile_evaluation_progress(records: pd.DataFrame, columns: list[str], title: str) -> None:
+    render_profile_mark_progress(
+        records,
+        columns,
+        title,
+        empty_label="evaluation",
+        key_prefix="profile_evaluation",
+        bar_color="#ef1c2a",
+        line_color="#28277f",
+    )
+
+
+def render_profile_mark_progress(
+    records: pd.DataFrame,
+    columns: list[str],
+    title: str,
+    empty_label: str,
+    key_prefix: str,
+    bar_color: str,
+    line_color: str,
+) -> None:
     progress = assessment_long_frame(records, columns)
     if progress.empty:
-        blank_state(f"No diagnostic data available for {title}.")
+        blank_state(f"No {empty_label} data available for {title}.")
         return
     summary = progress.groupby("Test", as_index=False)["Score"].mean()
-    fig = px.line(
-        summary,
-        x="Test",
-        y="Score",
-        markers=True,
-        text="Score",
-        title=title,
-        color_discrete_sequence=["#0f766e"],
+    summary["Score"] = pd.to_numeric(summary["Score"], errors="coerce").round(1)
+    summary = summary.dropna(subset=["Score"])
+    if summary.empty:
+        blank_state(f"No {empty_label} data available for {title}.")
+        return
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=summary["Test"],
+            y=summary["Score"],
+            marker_color=bar_color,
+            width=0.38,
+            name="Average Mark",
+            hovertemplate="Test: %{x}<br>Average Mark: %{y:.1f}<extra></extra>",
+        )
     )
-    fig.update_traces(texttemplate="%{text:.1f}", textposition="top center")
-    fig.update_layout(height=360, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=55, b=20))
-    st.plotly_chart(fig, use_container_width=True, key=f"profile_diagnostic_{safe_key(title)}_{id(records)}")
+    fig.add_trace(
+        go.Scatter(
+            x=summary["Test"],
+            y=summary["Score"],
+            mode="lines+markers+text",
+            text=summary["Score"],
+            texttemplate="%{text:.1f}",
+            textposition="top right",
+            textfont=dict(size=12, color=line_color),
+            cliponaxis=False,
+            line=dict(color=line_color, width=3),
+            marker=dict(size=9, color=line_color),
+            name="Progress Line",
+        )
+    )
+    y_max = max(100, float(summary["Score"].max()) * 1.12)
+    fig.update_layout(
+        title=title,
+        height=380,
+        yaxis_title="Average Mark",
+        yaxis_range=[0, y_max],
+        margin=dict(l=20, r=20, t=55, b=20),
+        showlegend=False,
+        bargap=0.58,
+    )
+    st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_{safe_key(title)}_{id(records)}")
 
 
 def comparable_program_label(value: object) -> str:

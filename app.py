@@ -2162,7 +2162,7 @@ def class_profile_section(records: pd.DataFrame) -> None:
     render_profile_students(
         class_records,
         "Class Students",
-        ["NO MATRIK", "NAMA PELAJAR", "PROGRAM", *grade_assessment_columns_from_records(class_records)],
+        ["NO MATRIK", "NAMA PELAJAR", "KELAS", "SISTEM", "PROGRAM", *profile_result_columns_for_records(class_records)],
         allow_download=False,
     )
     render_profile_spm_cards(class_records, average=True)
@@ -2231,7 +2231,7 @@ def lecturer_profile_section(records: pd.DataFrame, lecturer_refs: pd.DataFrame 
     render_profile_students(
         lecturer_records,
         "Lecturer Students",
-        ["NO MATRIK", "NAMA PELAJAR", "KELAS", "SISTEM", "PROGRAM", *grade_assessment_columns_from_records(lecturer_records)],
+        ["NO MATRIK", "NAMA PELAJAR", "KELAS", "SISTEM", "PROGRAM", *profile_result_columns_for_records(lecturer_records)],
         allow_download=False,
     )
     render_profile_spm_cards(lecturer_records, average=True)
@@ -2401,6 +2401,57 @@ def first_nonempty_value(values: pd.Series) -> str:
     return str(clean.iloc[0])
 
 
+def profile_result_columns_for_records(records: pd.DataFrame) -> list[str]:
+    if records.empty:
+        return []
+    subjects = sorted(
+        value.strip().upper()
+        for value in records.get("SUBJEK", pd.Series(dtype=str)).dropna().astype(str).tolist()
+        if value.strip()
+    )
+    subjects = list(dict.fromkeys(subjects))
+    columns = assessment_columns_from_records(records)
+    if not subjects:
+        return columns
+    selected = [
+        column
+        for column in columns
+        if any(profile_assessment_column_matches_subject(column, subject) for subject in subjects)
+    ]
+    selected.extend(PB_COLUMNS)
+    return list(dict.fromkeys(selected))
+
+
+def profile_assessment_column_matches_subject(column: str, subject: str) -> bool:
+    metadata = current_assessment_metadata()
+    subject_code = str(subject).upper().strip()
+    if not metadata.empty and "UJIAN" in metadata.columns and "SUBJEK" in metadata.columns:
+        matches = metadata[metadata["UJIAN"].apply(assessment_key) == assessment_key(column)]
+        if not matches.empty:
+            metadata_subjects = [value for value in matches["SUBJEK"].dropna().tolist() if str(value).strip()]
+            if metadata_subjects:
+                return any(assessment_subject_matches(value, subject_code) for value in metadata_subjects)
+
+    normalized = str(column).upper().strip()
+    if subject_code == "SM":
+        return (
+            normalized.startswith("SPM")
+            or normalized.startswith("AMAT")
+            or normalized.startswith("EVSM")
+            or is_pb_assessment(column)
+        )
+    if subject_code == "DM":
+        return (
+            normalized.startswith("PSPM_DM")
+            or normalized.startswith("TOP")
+            or normalized.startswith("EVDM")
+            or is_pb_assessment(column)
+        )
+    if subject_code == "AM":
+        return is_pb_assessment(column)
+    return assessment_column_subject_matches(column, subject_code)
+
+
 def render_profile_students(
     records: pd.DataFrame,
     title: str,
@@ -2416,11 +2467,26 @@ def render_profile_students(
         "PENSYARAH",
         "PROGRAM",
     ]
-    table = records[[column for column in columns if column in records.columns]].drop_duplicates()
+    table = records.copy()
+    for column in columns:
+        if column not in table.columns:
+            table[column] = pd.NA
+    table = table[columns].drop_duplicates()
+    pinned_columns = ["NO MATRIK", "NAMA PELAJAR", "KELAS", "SISTEM", "PROGRAM"]
+    column_config = {
+        column: st.column_config.TextColumn(column, pinned=True)
+        for column in pinned_columns
+        if column in table.columns
+    }
     if allow_download:
         render_data_table(table, safe_key(title), title)
     else:
-        st.dataframe(table, hide_index=True, use_container_width=True)
+        st.dataframe(
+            table,
+            hide_index=True,
+            use_container_width=True,
+            column_config=column_config,
+        )
 
 
 def render_profile_progress(records: pd.DataFrame, title: str) -> None:
@@ -4250,7 +4316,7 @@ def is_assessment_column(column: str) -> bool:
     return (
         normalized.startswith("SPM")
         or normalized.startswith("PSPM")
-        or normalized.startswith("AMAT")
+        or normalized.startswith(("AMAT", "TOP", "EVSM", "EVDM", "DT", "CM", "CMP", "MS"))
         or assessment_key(normalized) in {assessment_key(column) for column in PB_COLUMNS}
     )
 

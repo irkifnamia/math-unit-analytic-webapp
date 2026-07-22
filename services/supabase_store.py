@@ -52,6 +52,9 @@ RESULTS_COLUMNS = [
     "AMAT_C9C10",
     "PSPM_SEM1",
     "PSPM_SEM2",
+    "UPS 1",
+    "UPS 2",
+    "UPS 3",
 ]
 ASSESSMENTS_COLUMNS = ["id", "created_at", "updated_at", "UJIAN", "KATEGORI", "SUBJEK"]
 PLANNING_COLUMNS = [
@@ -81,6 +84,9 @@ RESULTS_WRITABLE_COLUMNS = [
     "AMAT_C9C10",
     "PSPM_SEM1",
     "PSPM_SEM2",
+    "UPS 1",
+    "UPS 2",
+    "UPS 3",
 ]
 PLANNING_WRITABLE_COLUMNS = ["NO MATRIK", "TOV SEM 1", "SASARAN SEM 1", "TOV SEM 2", "SASARAN SEM 2"]
 ASSESSMENTS_WRITABLE_COLUMNS = ["UJIAN", "KATEGORI", "SUBJEK"]
@@ -795,7 +801,7 @@ def clean_payload(
 
 def is_whole_number_result_column(column: str) -> bool:
     normalized = str(column).upper().strip()
-    return normalized.startswith(("AMAT", "TOP", "EVSM", "EVDM", "DT", "CM", "CMP", "MS"))
+    return normalized.startswith(("AMAT", "TOP", "EVSM", "EVDM", "DT", "CM", "CMP", "MS", "UPS"))
 
 
 def normalize_whole_number(value: Any, column: str) -> int | float:

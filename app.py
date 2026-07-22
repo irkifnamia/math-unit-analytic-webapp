@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 from html import escape
@@ -71,11 +71,12 @@ APP_USERS_COLUMNS = [
 ]
 STUDENT_DETAIL_COLUMNS = ["NAMA PELAJAR", "NO MATRIK", "KELAS", "PENSYARAH", "JURUSAN", "SISTEM"]
 DIAGNOSTIC_COLUMNS = ["AMAT_C1C2", "AMAT_C5", "AMAT_C8", "AMAT_C9C10"]
+PB_COLUMNS = ["UPS 1", "UPS 2", "UPS 3"]
 GRADE_TEST_COLUMNS = ["PSPM_DM015", "PSPM_DM025", "PSPM_SEM1", "PSPM_SEM2"]
 EVALUATION_COLUMNS: list[str] = []
 PERFORMANCE_COLUMNS = [*GRADE_TEST_COLUMNS, *DIAGNOSTIC_COLUMNS]
 SPM_TEST_COLUMNS = ["SPM_MATH", "SPM_ADDMATH"]
-UJIAN_OPTIONS = [*SPM_TEST_COLUMNS, *GRADE_TEST_COLUMNS, *DIAGNOSTIC_COLUMNS]
+UJIAN_OPTIONS = [*SPM_TEST_COLUMNS, *GRADE_TEST_COLUMNS, *DIAGNOSTIC_COLUMNS, *PB_COLUMNS]
 ASSESSMENT_METADATA_COLUMNS = ["UJIAN", "KATEGORI", "SUBJEK"]
 ASSESSMENT_IDENTITY_COLUMNS = {
     "id",
@@ -358,6 +359,7 @@ def sidebar_navigation(
         "PSPM ANALYSIS",
         "TOV & TARGET ANALYSIS",
         "DIAGNOSTIC ANALYSIS",
+        "PB ANALYSIS",
         "EVALUATION ANALYSIS",
         "LECTURER PROGRESS",
         "CLASS PROGRESS",
@@ -368,6 +370,7 @@ def sidebar_navigation(
         "PSPM ANALYSIS": "ANALYSIS : PSPM",
         "TOV & TARGET ANALYSIS": "ANALYSIS : TOV & TARGET",
         "DIAGNOSTIC ANALYSIS": "ANALYSIS : DIAGNOSTIC",
+        "PB ANALYSIS": "ANALYSIS : PB",
         "EVALUATION ANALYSIS": "ANALYSIS : EVALUATION",
         "LECTURER PROGRESS": "PROGRESS : LECTURER",
         "CLASS PROGRESS": "PROGRESS : CLASS",
@@ -1282,6 +1285,15 @@ def diagnostic_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, l
     assessment_mark_dashboard(records, filters, "DIAGNOSTIK", "diagnostic")
 
 
+def pb_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
+    page_header(
+        "PB ANALYSIS",
+        "Track UPS performance-based progress across cohorts, classes, and lecturers.",
+        user["role"],
+    )
+    assessment_mark_dashboard(records, filters, "PB", "pb", auto_histogram_range=True)
+
+
 def evaluation_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, list[str]]) -> None:
     page_header(
         "EVALUATION ANALYSIS",
@@ -1291,7 +1303,13 @@ def evaluation_dashboard(records: pd.DataFrame, user: dict, filters: dict[str, l
     assessment_mark_dashboard(records, filters, "EVALUATION", "evaluation")
 
 
-def assessment_mark_dashboard(records: pd.DataFrame, filters: dict[str, list[str]], category: str, label: str) -> None:
+def assessment_mark_dashboard(
+    records: pd.DataFrame,
+    filters: dict[str, list[str]],
+    category: str,
+    label: str,
+    auto_histogram_range: bool = False,
+) -> None:
     subjects = assessment_subjects_for_category(records, filters, category)
     if not subjects:
         blank_state(f"No {label} assessment subjects are available.")
@@ -1300,7 +1318,7 @@ def assessment_mark_dashboard(records: pd.DataFrame, filters: dict[str, list[str
     for tab, subject in zip(tabs, subjects):
         with tab:
             subject_records = subject_filtered_records(records, subject)
-            render_mark_assessment_analysis(subject_records, filters, subject, category, label)
+            render_mark_assessment_analysis(subject_records, filters, subject, category, label, auto_histogram_range)
 
 
 def render_mark_assessment_analysis(
@@ -1309,6 +1327,7 @@ def render_mark_assessment_analysis(
     subject: str,
     category: str,
     label: str,
+    auto_histogram_range: bool = False,
 ) -> None:
     records = records.copy()
     requested_columns = assessment_tests_for_category_subject(category, subject, filters)
@@ -1326,7 +1345,7 @@ def render_mark_assessment_analysis(
             if column_name not in mark_columns:
                 mark_columns.append(column_name)
     else:
-        fallback_columns = diagnostic_columns_from_records(records) if category == "DIAGNOSTIK" else evaluation_columns_from_records(records)
+        fallback_columns = fallback_mark_columns_for_category(records, category)
         mark_columns = assessment_columns_for_category(records, filters, category, fallback_columns, active_subject=subject)
     mark_columns = ordered_mark_assessment_columns(category, subject, mark_columns)
     page_key = f"{label}_{subject}"
@@ -1494,6 +1513,7 @@ def render_mark_assessment_analysis(
             selected_test_long,
             selected_distribution_test,
             key=f"{label}_{subject}_{selected_distribution_test}_score_distribution",
+            auto_range=auto_histogram_range,
         )
         selected_frame = first_non_empty_frame(score_selection, selected_frame)
         if score_selection is not None and not score_selection.empty:
@@ -1526,7 +1546,10 @@ def ordered_mark_assessment_columns(category: str, subject: str, columns: list[s
         ("EVALUATION", "SM"): ["EVSM_C1C2", "EVSM_C5", "EVSM_C8", "EVSM_C9C10"],
         ("EVALUATION", "DM"): ["EVDM_C1", "EVDM_C2", "EVDM_C4", "EVDM_C7", "EVDM_C3"],
     }
-    order = preferred_orders.get((str(category).upper().strip(), str(subject).upper().strip()))
+    if str(category).upper().strip() == "PB":
+        order = PB_COLUMNS
+    else:
+        order = preferred_orders.get((str(category).upper().strip(), str(subject).upper().strip()))
     if not order:
         return columns
     lookup = {assessment_key(column): column for column in columns}
@@ -1551,6 +1574,17 @@ def assessment_subjects_for_category(records: pd.DataFrame, filters: dict[str, l
     if "SUBJEK" in records:
         discovered.update(value.strip().upper() for value in records["SUBJEK"].dropna().astype(str).unique().tolist() if value)
     return sort_subjects([*discovered, "SM", "DM", "AM"])
+
+
+def fallback_mark_columns_for_category(records: pd.DataFrame, category: str) -> list[str]:
+    category_code = str(category).upper().strip()
+    if category_code == "DIAGNOSTIK":
+        return diagnostic_columns_from_records(records)
+    if category_code == "EVALUATION":
+        return evaluation_columns_from_records(records)
+    if category_code == "PB":
+        return pb_columns_from_records(records)
+    return []
 
 
 def render_average_mark_cards(records: pd.DataFrame, assessment_long: pd.DataFrame, test_columns: list[str]) -> None:
@@ -1649,7 +1683,7 @@ def mark_test_selector(test_columns: list[str], key: str, label: str) -> str:
     return st.radio(label, options, horizontal=True, key=key)
 
 
-def render_mark_histogram(records: pd.DataFrame, test_name: str, key: str) -> pd.DataFrame | None:
+def render_mark_histogram(records: pd.DataFrame, test_name: str, key: str, auto_range: bool = False) -> pd.DataFrame | None:
     chart_section_heading("Score Distribution")
     if records.empty:
         empty_chart_placeholder("Score Distribution", f"No marks available for {test_name}.", height=420, key=key)
@@ -1662,12 +1696,12 @@ def render_mark_histogram(records: pd.DataFrame, test_name: str, key: str) -> pd
         empty_chart_placeholder("Score Distribution", f"No marks available for {test_name}.", height=420, key=key)
         return None
 
-    labels = [f"{start}-{start + 4}" for start in range(0, 95, 5)] + ["95-100"]
-    clipped_scores = frame["Score"].clip(lower=0, upper=100)
-    interval_starts = ((clipped_scores // 5) * 5).astype(int).clip(upper=95)
-    frame["Mark Interval"] = interval_starts.map(
-        lambda start: f"{start}-{start + 4}" if start < 95 else "95-100"
-    )
+    labels, interval_lookup = mark_interval_labels(frame["Score"], auto_range=auto_range)
+    interval_scores = frame["Score"] if auto_range else frame["Score"].clip(lower=0, upper=100)
+    interval_starts = ((interval_scores // 5) * 5).astype(int)
+    if not auto_range:
+        interval_starts = interval_starts.clip(upper=95)
+    frame["Mark Interval"] = interval_starts.map(interval_lookup)
     distribution = (
         frame.groupby("Mark Interval")
         .agg(Students=("NO MATRIK", "nunique"))
@@ -1716,6 +1750,28 @@ def render_mark_histogram(records: pd.DataFrame, test_name: str, key: str) -> pd
     if not interval:
         return None
     return frame[frame["Mark Interval"].astype(str) == interval].copy()
+
+
+def mark_interval_labels(scores: pd.Series, auto_range: bool = False) -> tuple[list[str], dict[int, str]]:
+    numeric_scores = pd.to_numeric(scores, errors="coerce").dropna()
+    if numeric_scores.empty:
+        return [], {}
+    if not auto_range:
+        starts = list(range(0, 100, 5))
+        labels = [f"{start}-{start + 4}" for start in starts[:-1]] + ["95-100"]
+        return labels, {start: label for start, label in zip(starts, labels)}
+
+    min_score = float(numeric_scores.min())
+    max_score = float(numeric_scores.max())
+    lower = min(0, int((min_score // 5) * 5))
+    upper = max(lower, int(max_score) if float(max_score).is_integer() else int(max_score) + 1)
+    last_start = int((upper // 5) * 5)
+    starts = list(range(lower, last_start + 1, 5)) or [0]
+    labels = []
+    for start in starts:
+        end = min(start + 4, upper)
+        labels.append(str(start) if end <= start else f"{start}-{end}")
+    return labels, {start: label for start, label in zip(starts, labels)}
 
 
 def render_top_classes_for_test(records: pd.DataFrame, test_name: str, key: str) -> pd.DataFrame | None:
@@ -3545,10 +3601,8 @@ def form_field_value(row: pd.Series | None, column: str) -> str:
 
 def is_whole_number_assessment(column: str) -> bool:
     normalized = str(column).upper().strip()
-    return (
-        is_diagnostic_assessment(column)
-        or is_evaluation_assessment(column)
-        or normalized.startswith(("AMAT", "TOP", "EVSM", "EVDM", "DT", "CM", "CMP", "MS"))
+    return is_mark_score_assessment(column) or normalized.startswith(
+        ("AMAT", "TOP", "EVSM", "EVDM", "DT", "CM", "CMP", "MS", "UPS")
     )
 
 
@@ -3951,6 +4005,9 @@ def assessment_columns_for_category(
             selected_test_keys = {assessment_key(value) for value in selected_tests}
             filtered = filtered[filtered["UJIAN"].apply(assessment_key).isin(selected_test_keys)]
         metadata_columns = filtered["UJIAN"].dropna().astype(str).str.strip().tolist()
+        if category_code == "PB":
+            pb_keys = {assessment_key(column) for column in PB_COLUMNS}
+            metadata_columns = [column for column in metadata_columns if assessment_key(column) in pb_keys]
         ordered_metadata_columns = matching_record_columns(records, metadata_columns)
         if ordered_metadata_columns:
             return list(dict.fromkeys(ordered_metadata_columns))
@@ -3999,40 +4056,61 @@ def matching_record_columns(records: pd.DataFrame, requested_columns: list[str])
 
 def assessment_tests_for_category(category: str, filters: dict[str, list[str]]) -> list[str]:
     metadata = current_assessment_metadata()
-    if metadata.empty:
-        return []
     category_code = str(category).upper().strip()
     selected_categories = [str(value).upper().strip() for value in filters.get("Kategori", []) if value]
     if selected_categories and category_code not in selected_categories:
+        return []
+    selected_tests = [value for value in filters.get("Ujian", []) if value]
+    if category_code == "PB":
+        tests = PB_COLUMNS
+        if selected_tests:
+            selected_test_keys = {assessment_key(value) for value in selected_tests}
+            tests = [test for test in tests if assessment_key(test) in selected_test_keys]
+        return pb_test_order(tests)
+    if metadata.empty:
         return []
     filtered = metadata[metadata["KATEGORI"].str.upper() == category_code].copy()
     selected_subjects = [value for value in filters.get("Subjek", []) if value]
     if selected_subjects:
         filtered = filtered[filtered["SUBJEK"].apply(lambda value: assessment_subject_intersects(value, selected_subjects))]
-    selected_tests = [value for value in filters.get("Ujian", []) if value]
     if selected_tests:
         selected_test_keys = {assessment_key(value) for value in selected_tests}
         filtered = filtered[filtered["UJIAN"].apply(assessment_key).isin(selected_test_keys)]
-    return list(dict.fromkeys(filtered["UJIAN"].dropna().astype(str).str.strip().tolist()))
+    tests = filtered["UJIAN"].dropna().astype(str).str.strip().tolist()
+    return list(dict.fromkeys(tests))
 
 
 def assessment_tests_for_category_subject(category: str, subject: str, filters: dict[str, list[str]]) -> list[str]:
     metadata = current_assessment_metadata()
-    if metadata.empty:
-        return []
     category_code = str(category).upper().strip()
     selected_categories = [str(value).upper().strip() for value in filters.get("Kategori", []) if value]
     if selected_categories and category_code not in selected_categories:
+        return []
+    selected_tests = [value for value in filters.get("Ujian", []) if value]
+    if category_code == "PB":
+        tests = PB_COLUMNS
+        if selected_tests:
+            selected_test_keys = {assessment_key(value) for value in selected_tests}
+            tests = [test for test in tests if assessment_key(test) in selected_test_keys]
+        return pb_test_order(tests)
+    if metadata.empty:
         return []
     filtered = metadata[
         (metadata["KATEGORI"].str.upper() == category_code)
         & (metadata["SUBJEK"].apply(lambda value: assessment_subject_matches(value, subject)))
     ].copy()
-    selected_tests = [value for value in filters.get("Ujian", []) if value]
     if selected_tests:
         selected_test_keys = {assessment_key(value) for value in selected_tests}
         filtered = filtered[filtered["UJIAN"].apply(assessment_key).isin(selected_test_keys)]
-    return list(dict.fromkeys(filtered["UJIAN"].dropna().astype(str).str.strip().tolist()))
+    tests = filtered["UJIAN"].dropna().astype(str).str.strip().tolist()
+    return list(dict.fromkeys(tests))
+
+
+def pb_test_order(tests: list[str]) -> list[str]:
+    lookup = {assessment_key(test): test for test in tests}
+    ordered = [lookup[assessment_key(test)] for test in PB_COLUMNS if assessment_key(test) in lookup]
+    ordered.extend(test for test in tests if test not in ordered)
+    return ordered
 
 
 def assessment_key(value: object) -> str:
@@ -4093,6 +4171,7 @@ def is_assessment_column(column: str) -> bool:
         normalized.startswith("SPM")
         or normalized.startswith("PSPM")
         or normalized.startswith("AMAT")
+        or assessment_key(normalized) in {assessment_key(column) for column in PB_COLUMNS}
     )
 
 
@@ -4123,6 +4202,17 @@ def is_diagnostic_assessment(column: str) -> bool:
 
 def is_evaluation_assessment(column: str) -> bool:
     return assessment_category_for_column(column) == "EVALUATION"
+
+
+def is_pb_assessment(column: str) -> bool:
+    category = assessment_category_for_column(column)
+    if category:
+        return category == "PB" and assessment_key(column) in {assessment_key(value) for value in PB_COLUMNS}
+    return assessment_key(column) in {assessment_key(value) for value in PB_COLUMNS}
+
+
+def is_mark_score_assessment(column: str) -> bool:
+    return is_diagnostic_assessment(column) or is_evaluation_assessment(column) or is_pb_assessment(column)
 
 
 def assessment_category_for_column(column: str) -> str:
@@ -4157,6 +4247,10 @@ def diagnostic_columns_from_records(records: pd.DataFrame) -> list[str]:
 
 def evaluation_columns_from_records(records: pd.DataFrame) -> list[str]:
     return [column for column in assessment_columns_from_records(records) if is_evaluation_assessment(column)]
+
+
+def pb_columns_from_records(records: pd.DataFrame) -> list[str]:
+    return [column for column in assessment_columns_from_records(records) if is_pb_assessment(column)]
 
 
 def grade_assessment_columns_from_records(records: pd.DataFrame) -> list[str]:
@@ -4545,7 +4639,7 @@ def render_average_cgpa_comparison(
 
 
 def score_series(values: pd.Series, column: str) -> pd.Series:
-    if is_diagnostic_assessment(column) or is_evaluation_assessment(column):
+    if is_mark_score_assessment(column):
         return pd.to_numeric(values, errors="coerce")
     return cgpa_series(values, column)
 
@@ -4735,7 +4829,7 @@ def ranked_metric(
 def assessment_value_mask(records: pd.DataFrame, assessment_column: str) -> pd.Series:
     if assessment_column not in records:
         return pd.Series(False, index=records.index)
-    if is_diagnostic_assessment(assessment_column) or is_evaluation_assessment(assessment_column):
+    if is_mark_score_assessment(assessment_column):
         return pd.to_numeric(records[assessment_column], errors="coerce").notna()
     if is_spm_assessment(assessment_column) or is_pspm_assessment(assessment_column):
         return cgpa_series(records[assessment_column], assessment_column).notna()
@@ -4875,7 +4969,7 @@ def render_selected_students(title: str, frame: pd.DataFrame, assessment_column:
 def selected_assessment_value_label(assessment_column: str | None) -> str | None:
     if not assessment_column:
         return None
-    if is_diagnostic_assessment(assessment_column) or is_evaluation_assessment(assessment_column):
+    if is_mark_score_assessment(assessment_column):
         return "MARK"
     if is_spm_assessment(assessment_column) or is_pspm_assessment(assessment_column):
         return "GRADE"
@@ -4885,7 +4979,7 @@ def selected_assessment_value_label(assessment_column: str | None) -> str | None
 def selected_assessment_value_series(frame: pd.DataFrame, assessment_column: str | None) -> pd.Series | None:
     if not assessment_column:
         return None
-    if is_diagnostic_assessment(assessment_column) or is_evaluation_assessment(assessment_column):
+    if is_mark_score_assessment(assessment_column):
         if "Score" in frame.columns:
             return pd.to_numeric(frame["Score"], errors="coerce").map(format_mark_value)
         if assessment_column in frame.columns:
@@ -5007,7 +5101,7 @@ def render_progress_assessment_cards(
     students_with_value = int(base_frame.loc[has_value_mask, "NO MATRIK"].nunique()) if "NO MATRIK" in base_frame else 0
     students_missing = max(total_students - students_with_value, 0)
     average_value = pd.to_numeric(assessment_frame.get(value_column, pd.Series(dtype=float)), errors="coerce").dropna()
-    average_label = "Average Mark" if is_diagnostic_assessment(assessment_column) or is_evaluation_assessment(assessment_column) else "Average CGPA"
+    average_label = "Average Mark" if is_mark_score_assessment(assessment_column) else "Average CGPA"
     average_display = "-" if average_value.empty else f"{average_value.mean():.2f}"
 
     cards = st.columns(4)
@@ -5033,7 +5127,7 @@ def render_progress_distribution(
             enable_selection=True,
             return_selection=return_selection,
         )
-    elif is_diagnostic_assessment(section_label) or is_evaluation_assessment(section_label):
+    elif is_mark_score_assessment(section_label):
         return render_diagnostic_mark_distribution(
             frame,
             section_label,
@@ -5055,7 +5149,7 @@ def render_progress_filtered_record_table(
 
     detail = base_frame.copy()
     value_label = selected_assessment_value_label(assessment_column) or "VALUE"
-    if is_diagnostic_assessment(assessment_column) or is_evaluation_assessment(assessment_column):
+    if is_mark_score_assessment(assessment_column):
         if "Score" in detail.columns:
             detail[value_label] = pd.to_numeric(detail["Score"], errors="coerce").map(format_mark_value)
         else:
@@ -5511,6 +5605,7 @@ def main() -> None:
         "SPM ANALYSIS",
         "PSPM ANALYSIS",
         "DIAGNOSTIC ANALYSIS",
+        "PB ANALYSIS",
         "EVALUATION ANALYSIS",
         "LECTURER PROGRESS",
         "CLASS PROGRESS",
@@ -5537,6 +5632,8 @@ def main() -> None:
         tov_target_analysis_page(records, user)
     elif page == "DIAGNOSTIC ANALYSIS":
         diagnostic_dashboard(records, user, filters)
+    elif page == "PB ANALYSIS":
+        pb_dashboard(records, user, filters)
     elif page == "EVALUATION ANALYSIS":
         evaluation_dashboard(records, user, filters)
     elif page == "LECTURER PROGRESS":

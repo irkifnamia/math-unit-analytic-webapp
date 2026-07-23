@@ -3759,13 +3759,13 @@ def safe_key(value: str) -> str:
 def render_table_download_menu(df: pd.DataFrame, file_stem: str, title: str) -> None:
     if df.empty:
         return
-    menu_cols = st.columns([10, 1])
+    menu_cols = st.columns([8.5, 1.5])
     with menu_cols[1]:
         stem = safe_key(file_stem) or "table"
         if hasattr(st, "popover"):
-            with st.popover("â‹¯", help="Download table"):
+            with st.popover("Download", help="Download this table"):
                 st.download_button(
-                    "CSV",
+                    "Download CSV",
                     df.to_csv(index=False).encode("utf-8-sig"),
                     file_name=f"{stem}.csv",
                     mime="text/csv",
@@ -3773,7 +3773,7 @@ def render_table_download_menu(df: pd.DataFrame, file_stem: str, title: str) -> 
                     key=f"{stem}_table_csv",
                 )
                 st.download_button(
-                    "Excel",
+                    "Download Excel",
                     dataframe_to_excel_bytes(df, title),
                     file_name=f"{stem}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -3781,10 +3781,21 @@ def render_table_download_menu(df: pd.DataFrame, file_stem: str, title: str) -> 
                     key=f"{stem}_table_xlsx",
                 )
         else:
-            with st.expander("Download", expanded=False):
-                st.download_button("CSV", df.to_csv(index=False).encode("utf-8-sig"), f"{stem}.csv", "text/csv", key=f"{stem}_table_csv")
-                st.download_button("Excel", dataframe_to_excel_bytes(df, title), f"{stem}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"{stem}_table_xlsx")
-
+            with st.expander("Download table", expanded=False):
+                st.download_button(
+                    "Download CSV",
+                    df.to_csv(index=False).encode("utf-8-sig"),
+                    file_name=f"{stem}.csv",
+                    mime="text/csv",
+                    key=f"{stem}_table_csv",
+                )
+                st.download_button(
+                    "Download Excel",
+                    dataframe_to_excel_bytes(df, title),
+                    file_name=f"{stem}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"{stem}_table_xlsx",
+                )
 
 def render_data_table(
     df: pd.DataFrame,

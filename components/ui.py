@@ -210,6 +210,10 @@ def inject_theme() -> None:
         .download-strip {
             margin: 0.35rem 0 1.1rem;
         }
+        div[data-testid="stPopover"] button {
+            min-width: 104px;
+            white-space: nowrap !important;
+        }
 
         div[data-testid="stMetric"] {
             background:

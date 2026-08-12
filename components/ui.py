@@ -55,27 +55,69 @@ def inject_theme() -> None:
             max-width: 1420px;
         }
         [data-testid="stHeader"] {
-            height: 1.45rem !important;
-            min-height: 1.45rem !important;
-            background: rgba(255, 255, 255, 0.92) !important;
-            border-bottom: 1px solid rgba(221, 226, 238, 0.65) !important;
+            display: block !important;
+            visibility: visible !important;
+            height: 2.35rem !important;
+            min-height: 2.35rem !important;
+            background: transparent !important;
+            border: 0 !important;
+            box-shadow: none !important;
+            pointer-events: none !important;
+            overflow: visible !important;
+        }
+
+        [data-testid="stDecoration"],
+        [data-testid="stStatusWidget"],
+        [data-testid="stMainMenu"],
+        .stDeployButton,
+        #MainMenu {
+            display: none !important;
+            visibility: hidden !important;
+            height: 0 !important;
+            min-height: 0 !important;
+            max-height: 0 !important;
+            pointer-events: none !important;
         }
 
         [data-testid="stToolbar"] {
-            min-height: 1.45rem !important;
-            height: 1.45rem !important;
-            padding-top: 0 !important;
-            padding-bottom: 0 !important;
-            align-items: center !important;
+            background: transparent !important;
+            min-height: 2.35rem !important;
+            height: 2.35rem !important;
+            pointer-events: none !important;
         }
 
         [data-testid="stToolbar"] button,
         [data-testid="stToolbar"] a,
         [data-testid="stToolbar"] [role="button"] {
-            min-height: 1.35rem !important;
-            height: 1.35rem !important;
-            padding-top: 0 !important;
-            padding-bottom: 0 !important;
+            pointer-events: auto !important;
+        }
+
+        [data-testid="stToolbar"] button[aria-label*="Deploy"],
+        [data-testid="stToolbar"] button[title*="Deploy"],
+        [data-testid="stToolbar"] button[aria-label*="Share"],
+        [data-testid="stToolbar"] button[title*="Share"],
+        [data-testid="stToolbar"] button[aria-label*="GitHub"],
+        [data-testid="stToolbar"] button[title*="GitHub"],
+        [data-testid="stToolbar"] button[aria-label*="menu"],
+        [data-testid="stToolbar"] button[title*="menu"],
+        [data-testid="stToolbar"] a[href*="github"],
+        [data-testid="stToolbar"] a[href*="share"] {
+            display: none !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
+        }
+
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarCollapsedControl"],
+        button[aria-label="Open sidebar"],
+        button[aria-label="Close sidebar"],
+        button[title="Open sidebar"],
+        button[title="Close sidebar"] {
+            display: flex !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+            z-index: 1000000 !important;
         }
 
         [data-testid="stSidebar"] {
@@ -236,7 +278,7 @@ def inject_theme() -> None:
         div.element-container:has(.app-header),
         div[data-testid="stMarkdownContainer"]:has(.app-header) {
             position: sticky !important;
-            top: 1.65rem !important;
+            top: 2.55rem !important;
             z-index: 999 !important;
             background: linear-gradient(180deg, rgba(246, 247, 251, 0.98), rgba(246, 247, 251, 0.9));
             padding: 0.22rem 0 0.28rem;
@@ -246,7 +288,7 @@ def inject_theme() -> None:
 
         .app-header {
             position: sticky;
-            top: 1.65rem;
+            top: 2.55rem;
             z-index: 1000;
             background:
                 linear-gradient(135deg, #171b4f 0%, #25298c 58%, #111432 100%);

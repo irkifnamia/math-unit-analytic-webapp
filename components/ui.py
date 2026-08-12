@@ -54,6 +54,29 @@ def inject_theme() -> None:
             padding-bottom: 2.25rem;
             max-width: 1420px;
         }
+        [data-testid="stHeader"] {
+            height: 1.45rem !important;
+            min-height: 1.45rem !important;
+            background: rgba(255, 255, 255, 0.92) !important;
+            border-bottom: 1px solid rgba(221, 226, 238, 0.65) !important;
+        }
+
+        [data-testid="stToolbar"] {
+            min-height: 1.45rem !important;
+            height: 1.45rem !important;
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
+            align-items: center !important;
+        }
+
+        [data-testid="stToolbar"] button,
+        [data-testid="stToolbar"] a,
+        [data-testid="stToolbar"] [role="button"] {
+            min-height: 1.35rem !important;
+            height: 1.35rem !important;
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
+        }
 
         [data-testid="stSidebar"] {
             background:
@@ -61,13 +84,6 @@ def inject_theme() -> None:
             border-right: 1px solid var(--app-border);
         }
 
-        [data-testid="stSidebar"]::before {
-            content: "";
-            display: block;
-            height: 5px;
-            background: linear-gradient(90deg, var(--app-red), var(--app-yellow), var(--app-accent));
-            margin: 0 -1rem 1rem;
-        }
 
         [data-testid="stSidebar"] * {
             color: var(--app-ink);
@@ -220,7 +236,7 @@ def inject_theme() -> None:
         div.element-container:has(.app-header),
         div[data-testid="stMarkdownContainer"]:has(.app-header) {
             position: sticky !important;
-            top: 3.25rem !important;
+            top: 1.65rem !important;
             z-index: 999 !important;
             background: linear-gradient(180deg, rgba(246, 247, 251, 0.98), rgba(246, 247, 251, 0.9));
             padding: 0.22rem 0 0.28rem;
@@ -230,7 +246,7 @@ def inject_theme() -> None:
 
         .app-header {
             position: sticky;
-            top: 3.25rem;
+            top: 1.65rem;
             z-index: 1000;
             background:
                 linear-gradient(135deg, #171b4f 0%, #25298c 58%, #111432 100%);

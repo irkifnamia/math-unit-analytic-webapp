@@ -223,8 +223,8 @@ def inject_theme() -> None:
             top: 3.25rem !important;
             z-index: 999 !important;
             background: linear-gradient(180deg, rgba(246, 247, 251, 0.98), rgba(246, 247, 251, 0.9));
-            padding: 0.35rem 0 0.4rem;
-            margin: -0.35rem 0 0.9rem;
+            padding: 0.22rem 0 0.28rem;
+            margin: -0.22rem 0 0.65rem;
             backdrop-filter: blur(12px);
         }
 
@@ -238,27 +238,27 @@ def inject_theme() -> None:
             border: 1px solid rgba(255, 255, 255, 0.14);
             border-left: 5px solid var(--app-red);
             border-radius: 8px;
-            padding: 1rem 1.1rem 0.92rem;
+            padding: 0.62rem 0.95rem 0.58rem;
             margin-bottom: 0;
-            box-shadow: 0 14px 34px rgba(17, 20, 50, 0.22);
+            box-shadow: 0 10px 24px rgba(17, 20, 50, 0.18);
         }
 
         .app-header::after {
             content: "";
             display: block;
             width: 100%;
-            height: 3px;
-            margin-top: 0.7rem;
+            height: 2px;
+            margin-top: 0.46rem;
             border-radius: 999px;
             background: linear-gradient(90deg, var(--app-red), var(--app-yellow), var(--app-accent));
         }
 
         .app-header h1 {
             margin: 0;
-            line-height: 1.08;
+            line-height: 1.02;
             font-weight: 850;
             text-transform: uppercase;
-            font-size: clamp(1.55rem, 2.4vw, 2.35rem);
+            font-size: clamp(1.35rem, 2vw, 1.95rem);
             color: #ffffff;
             display: flex;
             align-items: center;

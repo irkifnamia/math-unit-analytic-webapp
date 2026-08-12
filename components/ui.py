@@ -49,20 +49,31 @@ def inject_theme() -> None:
             font-family: Inter, Aptos, "Segoe UI", Arial, sans-serif;
         }
 
-        [data-testid="stHeader"],
+        [data-testid="stHeader"] {
+            background: transparent !important;
+            height: 0 !important;
+            min-height: 0 !important;
+            max-height: 0 !important;
+            pointer-events: none !important;
+        }
+
         [data-testid="stToolbar"],
         [data-testid="stDecoration"],
         [data-testid="stStatusWidget"],
         [data-testid="stMainMenu"],
         .stDeployButton,
-        #MainMenu,
-        header,
-        footer {
+        #MainMenu {
             display: none !important;
             visibility: hidden !important;
             height: 0 !important;
             min-height: 0 !important;
             max-height: 0 !important;
+        }
+
+        [data-testid="collapsedControl"] {
+            display: flex !important;
+            visibility: visible !important;
+            pointer-events: auto !important;
         }
 
         [data-testid="stAppViewContainer"] > .main,
@@ -75,14 +86,6 @@ def inject_theme() -> None:
         .block-container {
             padding-bottom: 2.25rem;
             max-width: 1420px;
-        }
-
-        div:has(> a[href*="streamlit.io/cloud"]),
-        div:has(> button[title="Manage app"]),
-        div:has(> button[aria-label="Manage app"]),
-        div:has(> button[title="View app menu"]),
-        div:has(> button[aria-label="View app menu"]) {
-            display: none !important;
         }
 
         [data-testid="stSidebar"] {

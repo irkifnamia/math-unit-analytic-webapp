@@ -60,7 +60,7 @@ def inject_theme() -> None:
             visibility: visible !important;
             height: 2.35rem !important;
             min-height: 2.35rem !important;
-            background: transparent !important;
+            background: var(--app-bg) !important;
             border: 0 !important;
             box-shadow: none !important;
             pointer-events: none !important;
@@ -81,7 +81,7 @@ def inject_theme() -> None:
         }
 
         [data-testid="stToolbar"] {
-            background: transparent !important;
+            background: var(--app-bg) !important;
             min-height: 2.35rem !important;
             height: 2.35rem !important;
             pointer-events: none !important;

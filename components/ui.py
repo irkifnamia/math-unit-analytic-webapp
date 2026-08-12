@@ -54,6 +54,7 @@ def inject_theme() -> None:
             height: 0 !important;
             min-height: 0 !important;
             max-height: 0 !important;
+            overflow: visible !important;
             pointer-events: none !important;
         }
 
@@ -70,9 +71,28 @@ def inject_theme() -> None:
             max-height: 0 !important;
         }
 
-        [data-testid="collapsedControl"] {
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarCollapsedControl"] {
             display: flex !important;
             visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+            position: fixed !important;
+            top: 0.7rem !important;
+            left: 0.7rem !important;
+            z-index: 1000000 !important;
+            width: 2.35rem !important;
+            height: 2.35rem !important;
+            align-items: center !important;
+            justify-content: center !important;
+            background: #ffffff !important;
+            border: 1px solid var(--app-border-strong) !important;
+            border-radius: 8px !important;
+            box-shadow: var(--app-shadow-soft) !important;
+        }
+
+        [data-testid="collapsedControl"] button,
+        [data-testid="stSidebarCollapsedControl"] button {
             pointer-events: auto !important;
         }
 

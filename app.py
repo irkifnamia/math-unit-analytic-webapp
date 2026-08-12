@@ -313,28 +313,7 @@ def normalize_role(role: object) -> str:
 
 
 def render_user_badge(user: dict) -> None:
-    st.markdown(
-        f"""
-        <div style="
-            position: fixed;
-            top: 0.55rem;
-            right: 1.15rem;
-            z-index: 2000;
-            background: rgba(255,255,255,0.94);
-            border: 1px solid #dde2ee;
-            border-radius: 999px;
-            padding: 0.35rem 0.75rem;
-            box-shadow: 0 8px 22px rgba(20,24,39,0.08);
-            color: #141827;
-            font-family: Inter, Aptos, 'Segoe UI', Arial, sans-serif;
-            font-size: 0.82rem;
-            font-weight: 750;">
-            {user.get("full_name", "User")} <span style="color:#5f6678;">| {user.get("role", "")}</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
+    return None
 
 def sidebar_navigation(
     user: dict,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from html import escape
 from pathlib import Path
 
 import streamlit as st
@@ -311,6 +312,13 @@ def inject_theme() -> None:
             background: linear-gradient(90deg, var(--app-red), var(--app-yellow), var(--app-accent));
         }
 
+        .app-header-line {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+        }
+
         .app-header h1 {
             margin: 0;
             line-height: 1.02;
@@ -322,10 +330,31 @@ def inject_theme() -> None:
             align-items: center;
             gap: 0.7rem;
             flex-wrap: wrap;
+            min-width: 0;
         }
 
         .app-header p {
             display: none;
+        }
+
+        .header-user-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 auto;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.34);
+            color: #ffffff;
+            font-size: 0.78rem;
+            font-weight: 800;
+            padding: 0.22rem 0.66rem;
+            background: rgba(255, 255, 255, 0.12);
+            white-space: nowrap;
+        }
+
+        .header-user-pill span {
+            color: rgba(255, 255, 255, 0.72);
+            margin: 0 0.28rem;
         }
 
         .role-pill {
@@ -486,11 +515,24 @@ def inject_theme() -> None:
 
 
 def page_header(title: str, caption: str, role: str | None = None) -> None:
-    role_markup = f"<span class='role-pill'>{role}</span>" if role else ""
+    role_markup = f"<span class='role-pill'>{escape(str(role))}</span>" if role else ""
+    user = st.session_state.get("user", {}) if hasattr(st, "session_state") else {}
+    user_name = str(user.get("full_name", "")).strip()
+    user_role = str(user.get("role", role or "")).strip()
+    user_markup = ""
+    if user_name or user_role:
+        user_markup = (
+            "<div class='header-user-pill'>"
+            f"{escape(user_name or 'User')}<span>|</span>{escape(user_role)}"
+            "</div>"
+        )
     st.markdown(
         f"""
         <div class="app-header">
-            <h1>{title.upper()} {role_markup}</h1>
+            <div class="app-header-line">
+                <h1>{escape(title.upper())} {role_markup}</h1>
+                {user_markup}
+            </div>
         </div>
         """,
         unsafe_allow_html=True,

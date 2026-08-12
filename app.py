@@ -354,7 +354,7 @@ def sidebar_navigation(
         "DATA MANAGEMENT",
         "DEMOGRAPHY",
         "PROFILING",
-        "DETAILED / DOWNLOAD",
+        "DOWNLOAD",
         "SPM ANALYSIS",
         "PSPM ANALYSIS",
         "TOV & TARGET ANALYSIS",
@@ -2703,7 +2703,7 @@ def progress_rank_page(records: pd.DataFrame, filters: dict[str, list[str]], gro
 
 def download_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> None:
     page_header(
-        "DETAILED / DOWNLOAD",
+        "DOWNLOAD",
         "Choose fields, filter rows, and export the selected dataset.",
         user["role"],
     )
@@ -2726,13 +2726,14 @@ def download_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> No
         if column in available_columns
     ]
 
-    st.subheader("Download Builder")
-    selected_columns = st.multiselect(
-        "Info fields to download",
-        available_columns,
-        default=default_columns,
-        key="download_selected_columns",
-    )
+    with st.container(border=True):
+        st.caption("INFO FIELDS TO DOWNLOAD")
+        selected_columns = st.multiselect(
+            "Info fields to download",
+            available_columns,
+            default=default_columns,
+            key="download_selected_columns",
+        )
 
     filtered = records.copy()
     try:
@@ -2742,21 +2743,26 @@ def download_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> No
         st.caption(str(exc))
         filtered = records.copy()
 
-    search_text = st.text_input(
-        "Search rows",
-        placeholder="Search across selected fields after global filters",
-        key="download_search_text",
-    )
-    if search_text.strip():
-        search_columns = selected_columns or available_columns
-        filtered = search_any_columns(filtered, search_text, search_columns)
+    with st.container(border=True):
+        st.caption("SEARCH AND PREVIEW")
+        search_text = st.text_input(
+            "Search rows",
+            placeholder="Search across selected fields after global filters",
+            key="download_search_text",
+        )
+        if search_text.strip():
+            search_columns = selected_columns or available_columns
+            filtered = search_any_columns(filtered, search_text, search_columns)
+        st.metric("Rows ready to download", f"{len(filtered):,}")
 
-    st.metric("Rows ready to download", f"{len(filtered):,}")
     if not selected_columns:
         blank_state("Choose at least one info field to download.")
         return
 
     export_df = filtered[selected_columns].copy()
+    if export_df.empty:
+        blank_state("No rows match the selected download filters.")
+        return
     render_data_table(export_df.head(500), "download_preview", "Download Preview")
     render_download_buttons(export_df, "custom_download_filtered_data", "Custom Download Data", user, store, include_pdf=False)
 
@@ -2765,37 +2771,41 @@ def apply_detailed_info_assessment_filters(records: pd.DataFrame) -> pd.DataFram
     source = records.copy()
     filtered = records.copy()
     grade_columns = grade_assessment_columns_from_records(source)
-    mark_columns = [*diagnostic_columns_from_records(source), *evaluation_columns_from_records(source)]
+    mark_columns = [
+        *diagnostic_columns_from_records(source),
+        *pb_columns_from_records(source),
+        *evaluation_columns_from_records(source),
+    ]
 
-    if grade_columns or mark_columns:
-        st.markdown("**Assessment Filters**")
-
-    for row_start in range(0, len(grade_columns), 6):
-        row_columns = st.columns(6)
-        for layout_column, column in zip(row_columns, grade_columns[row_start : row_start + 6]):
-            with layout_column:
-                order = cgpa_grade_order_for_column(column)
-                existing = source[column].replace({None: pd.NA}).astype("string").str.strip()
-                options = [grade for grade in order if grade in set(existing.dropna().tolist())]
-                extra_options = sorted(
-                    grade
-                    for grade in existing.dropna().unique().tolist()
-                    if grade and grade not in options
-                )
-                options = [*options, *extra_options]
-                selected = st.multiselect(
-                    column,
-                    options,
-                    placeholder=f"All {column} grades",
-                    key=f"detailed_info_grade_filter_{column}",
-                )
-                if selected:
-                    filtered = filtered[
-                        filtered[column].replace({None: pd.NA}).astype("string").str.strip().isin(selected)
-                    ]
+    with st.container(border=True):
+        st.caption("ASSESSMENT FILTERS")
+        if not grade_columns:
+            st.caption("No grade assessment filters available for the current data.")
+        for row_start in range(0, len(grade_columns), 6):
+            row_columns = st.columns(6)
+            for layout_column, column in zip(row_columns, grade_columns[row_start : row_start + 6]):
+                with layout_column:
+                    order = cgpa_grade_order_for_column(column)
+                    existing = source[column].replace({None: pd.NA}).astype("string").str.strip()
+                    options = [grade for grade in order if grade in set(existing.dropna().tolist())]
+                    extra_options = sorted(
+                        grade
+                        for grade in existing.dropna().unique().tolist()
+                        if grade and grade not in options
+                    )
+                    options = [*options, *extra_options]
+                    selected = st.multiselect(
+                        column,
+                        options,
+                        placeholder=f"All {column} grades",
+                        key=f"detailed_info_grade_filter_{column}",
+                    )
+                    if selected:
+                        filtered = filtered[
+                            filtered[column].replace({None: pd.NA}).astype("string").str.strip().isin(selected)
+                        ]
 
     filtered = apply_detailed_info_mark_filters(source, filtered, mark_columns)
-
     return filtered
 
 
@@ -2805,20 +2815,21 @@ def apply_detailed_info_mark_filters(
     mark_columns: list[str],
 ) -> pd.DataFrame:
     grouped_columns = detailed_info_mark_filter_groups(source, mark_columns)
-    if not grouped_columns:
-        return filtered
+    with st.container(border=True):
+        st.caption("MARK FILTERS")
+        if not grouped_columns:
+            st.caption("No mark filters available for the current data.")
+            return filtered
 
-    st.markdown("**Mark Filters**")
-    group_items = list(grouped_columns.items())
-    if len(group_items) == 1:
-        group_label, columns = group_items[0]
-        filtered = render_detailed_info_mark_filter_group(source, filtered, group_label, columns)
-        return filtered
+        group_items = list(grouped_columns.items())
+        if len(group_items) == 1:
+            group_label, columns = group_items[0]
+            return render_detailed_info_mark_filter_group(source, filtered, group_label, columns)
 
-    tabs = st.tabs([group_label for group_label, _ in group_items])
-    for tab, (group_label, columns) in zip(tabs, group_items):
-        with tab:
-            filtered = render_detailed_info_mark_filter_group(source, filtered, group_label, columns)
+        tabs = st.tabs([group_label for group_label, _ in group_items])
+        for tab, (group_label, columns) in zip(tabs, group_items):
+            with tab:
+                filtered = render_detailed_info_mark_filter_group(source, filtered, group_label, columns)
     return filtered
 
 
@@ -2834,22 +2845,18 @@ def render_detailed_info_mark_filter_group(
         for layout_column, column in zip(row_columns, columns[row_start : row_start + 4]):
             with layout_column:
                 scores = pd.to_numeric(source[column], errors="coerce").dropna()
-                default_min = int(max(0, scores.min())) if not scores.empty else 0
-                default_max = int(min(100, scores.max())) if not scores.empty else 100
-                if default_min > default_max:
-                    default_min, default_max = default_max, default_min
-
+                slider_max = int(max(100, scores.max())) if not scores.empty else 100
                 st.caption(column)
                 selected_min, selected_max = st.slider(
                     "Range",
                     min_value=0,
-                    max_value=100,
-                    value=(default_min, default_max),
+                    max_value=slider_max,
+                    value=(0, slider_max),
                     step=1,
                     key=f"detailed_info_mark_range_{safe_key(group_label)}_{safe_key(column)}",
                     label_visibility="collapsed",
                 )
-                if not scores.empty and (selected_min > 0 or selected_max < 100):
+                if not scores.empty and (selected_min > 0 or selected_max < slider_max):
                     column_scores = pd.to_numeric(filtered[column], errors="coerce")
                     filtered = filtered[column_scores.between(selected_min, selected_max, inclusive="both")]
     return filtered
@@ -2857,12 +2864,17 @@ def render_detailed_info_mark_filter_group(
 
 def detailed_info_mark_filter_groups(source: pd.DataFrame, mark_columns: list[str]) -> dict[str, list[str]]:
     groups: dict[str, list[str]] = {}
-    for category in ["DIAGNOSTIK", "EVALUATION"]:
+    for category in ["DIAGNOSTIK", "PB", "EVALUATION"]:
         category_columns = [
             column
             for column in mark_columns
             if assessment_category_for_column(column) == category
         ]
+        if category == "PB":
+            pb_columns = ordered_mark_assessment_columns(category, "", category_columns)
+            if pb_columns:
+                groups["PB"] = pb_columns
+            continue
         for subject in ["SM", "DM", "AM"]:
             subject_columns = [
                 column
@@ -2888,7 +2900,6 @@ def assessment_column_subject_matches(column: str, subject: str) -> bool:
     if matches.empty:
         return True
     return assessment_subject_matches(matches.iloc[0].get("SUBJEK", ""), subject)
-
 
 def admin_page(user: dict, store: SupabaseStore) -> None:
     user["role"] = normalize_role(user.get("role"))
@@ -3227,7 +3238,6 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
     tab_records, tab_form, tab_import = st.tabs(["View or Delete", "Create or Update", "Bulk Import"])
 
     with tab_records:
-        st.subheader(f"{dataset_label} View or Delete")
         st.caption("Search, review, and delete records from the selected Supabase dataset.")
         record_search = st.text_input(
             "Search records",
@@ -3253,7 +3263,6 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
             st.rerun()
 
     with tab_form:
-        st.subheader(f"Create or Update {dataset_label}")
         update_search = st.text_input(
             "Search record to update",
             placeholder=dataset_search_placeholder(dataset_key),
@@ -3291,7 +3300,6 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
                     st.error(f"Unable to save record: {exc}")
 
     with tab_import:
-        st.subheader(f"Bulk Import and Update {dataset_label}")
         st.caption("Choose the fields to update. Imported rows only update the selected columns; other Supabase columns remain unchanged.")
         default_match_column = natural_key_column(dataset_key)
         match_column = st.selectbox(
@@ -5189,20 +5197,25 @@ def render_progress_section(
     )
     filtered_record_mode = group_column in {"PENSYARAH", "KELAS", "PROGRAM"}
     selected_groups: list[str] = []
-    left, right = st.columns([1.1, 1])
-    with left:
-        selected_groups.extend(
-            render_rank_chart(
-                rank,
-                group_column,
-                f"{section_label} {system_label} Rank",
-                metric_label,
-                axis_title,
-                f"{group_column}_{section_label}_{system_label}_rank_chart",
-                enable_selection=True,
+    show_rank_chart = group_column not in {"PENSYARAH", "KELAS"}
+    if show_rank_chart:
+        left, right = st.columns([1.1, 1])
+        with left:
+            selected_groups.extend(
+                render_rank_chart(
+                    rank,
+                    group_column,
+                    f"{section_label} {system_label} Rank",
+                    metric_label,
+                    axis_title,
+                    f"{group_column}_{section_label}_{system_label}_rank_chart",
+                    enable_selection=True,
+                )
             )
-        )
-    with right:
+        rank_table_container = right
+    else:
+        rank_table_container = st.container()
+    with rank_table_container:
         if rank.empty:
             blank_state(f"No {section_label.lower()} records for {system_label}.")
         else:
@@ -5767,7 +5780,7 @@ def main() -> None:
         "LECTURER PROGRESS",
         "CLASS PROGRESS",
         "PROGRAM PROGRESS",
-        "DETAILED / DOWNLOAD",
+        "DOWNLOAD",
     ]:
         base_records = store.fetch_base_records(user, results_mode="all")
     elif page in ["PROFILING"]:
@@ -5801,7 +5814,7 @@ def main() -> None:
         program_progress_page(records, user, filters)
     elif page == "PROFILING":
         profiling_page(records, user, store)
-    elif page == "DETAILED / DOWNLOAD":
+    elif page == "DOWNLOAD":
         download_page(records, user, store)
     elif page == "ADMIN":
         admin_page(user, store)

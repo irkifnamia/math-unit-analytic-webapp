@@ -50,10 +50,12 @@ def inject_theme() -> None:
         }
 
         [data-testid="stHeader"] {
+            display: block !important;
+            visibility: visible !important;
             background: transparent !important;
-            height: 0 !important;
-            min-height: 0 !important;
-            max-height: 0 !important;
+            height: 3rem !important;
+            min-height: 3rem !important;
+            max-height: 3rem !important;
             overflow: visible !important;
             pointer-events: none !important;
         }
@@ -72,7 +74,11 @@ def inject_theme() -> None:
         }
 
         [data-testid="collapsedControl"],
-        [data-testid="stSidebarCollapsedControl"] {
+        [data-testid="stSidebarCollapsedControl"],
+        button[aria-label="Open sidebar"],
+        button[aria-label="Close sidebar"],
+        button[title="Open sidebar"],
+        button[title="Close sidebar"] {
             display: flex !important;
             visibility: visible !important;
             opacity: 1 !important;
@@ -81,6 +87,7 @@ def inject_theme() -> None:
             top: 0.7rem !important;
             left: 0.7rem !important;
             z-index: 1000000 !important;
+            min-width: 2.35rem !important;
             width: 2.35rem !important;
             height: 2.35rem !important;
             align-items: center !important;

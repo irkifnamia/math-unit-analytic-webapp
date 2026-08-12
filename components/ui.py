@@ -49,68 +49,8 @@ def inject_theme() -> None:
             font-family: Inter, Aptos, "Segoe UI", Arial, sans-serif;
         }
 
-        [data-testid="stHeader"] {
-            display: block !important;
-            visibility: visible !important;
-            background: transparent !important;
-            height: 3rem !important;
-            min-height: 3rem !important;
-            max-height: 3rem !important;
-            overflow: visible !important;
-            pointer-events: none !important;
-        }
-
-        [data-testid="stToolbar"],
-        [data-testid="stDecoration"],
-        [data-testid="stStatusWidget"],
-        [data-testid="stMainMenu"],
-        .stDeployButton,
-        #MainMenu {
-            display: none !important;
-            visibility: hidden !important;
-            height: 0 !important;
-            min-height: 0 !important;
-            max-height: 0 !important;
-        }
-
-        [data-testid="collapsedControl"],
-        [data-testid="stSidebarCollapsedControl"],
-        button[aria-label="Open sidebar"],
-        button[aria-label="Close sidebar"],
-        button[title="Open sidebar"],
-        button[title="Close sidebar"] {
-            display: flex !important;
-            visibility: visible !important;
-            opacity: 1 !important;
-            pointer-events: auto !important;
-            position: fixed !important;
-            top: 0.7rem !important;
-            left: 0.7rem !important;
-            z-index: 1000000 !important;
-            min-width: 2.35rem !important;
-            width: 2.35rem !important;
-            height: 2.35rem !important;
-            align-items: center !important;
-            justify-content: center !important;
-            background: #ffffff !important;
-            border: 1px solid var(--app-border-strong) !important;
-            border-radius: 8px !important;
-            box-shadow: var(--app-shadow-soft) !important;
-        }
-
-        [data-testid="collapsedControl"] button,
-        [data-testid="stSidebarCollapsedControl"] button {
-            pointer-events: auto !important;
-        }
-
-        [data-testid="stAppViewContainer"] > .main,
-        [data-testid="stAppViewBlockContainer"],
         .block-container {
-            padding-top: 0 !important;
-            margin-top: 0 !important;
-        }
-
-        .block-container {
+            padding-top: 1.35rem;
             padding-bottom: 2.25rem;
             max-width: 1420px;
         }

@@ -3231,107 +3231,123 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
     )
     render_data_management_success()
     refs = store.get_reference_data()
-    dataset_label = st.selectbox("Dataset", list(DATASET_OPTIONS.keys()), key="dm_dataset")
+    with st.container(border=True):
+        st.caption("DATASET")
+        dataset_label = st.selectbox("Dataset", list(DATASET_OPTIONS.keys()), key="dm_dataset")
     dataset_key = DATASET_OPTIONS[dataset_label]
     dataset = dataset_frame(dataset_key, refs)
     writable_columns = store.writable_columns(dataset_key)
     tab_records, tab_form, tab_import = st.tabs(["View or Delete", "Create or Update", "Bulk Import"])
 
     with tab_records:
-        st.caption("Search, review, and delete records from the selected Supabase dataset.")
-        record_search = st.text_input(
-            "Search records",
-            placeholder=dataset_search_placeholder(dataset_key),
-            key="delete_record_search",
-        )
-        record_candidates = search_dataset(dataset, record_search, dataset_key)
-        render_data_table(record_candidates, f"{dataset_key}_view_delete", f"{dataset_label} View or Delete")
-        delete_options = dataset_option_map(record_candidates, dataset_key)
-        selected_labels = st.multiselect("Select records to delete", list(delete_options.keys()))
-        selected_ids = [delete_options[label] for label in selected_labels]
-        if st.button("Delete selected records", type="secondary", disabled=not selected_ids):
-            deleted = store.delete_reference(dataset_key, selected_ids)
-            history_logged = store.log_edit_history(
-                user,
-                "DELETE",
-                dataset_key,
-                details=f"Deleted {deleted} record(s): {', '.join(str(record_id) for record_id in selected_ids[:20])}",
+        with st.container(border=True):
+            st.caption("SEARCH RECORDS")
+            st.caption("Search, review, and delete records from the selected Supabase dataset.")
+            record_search = st.text_input(
+                "Search records",
+                placeholder=dataset_search_placeholder(dataset_key),
+                key="delete_record_search",
             )
-            set_data_management_success(f"Successfully deleted {deleted} {dataset_label.lower()} record(s).")
-            if not history_logged:
-                set_data_management_warning("The data was deleted, but edit history was not recorded because the edit_history table is unavailable.")
-            st.rerun()
+        record_candidates = search_dataset(dataset, record_search, dataset_key)
+        with st.container(border=True):
+            st.caption("RECORDS TABLE")
+            render_data_table(record_candidates, f"{dataset_key}_view_delete", f"{dataset_label} View or Delete")
+        with st.container(border=True):
+            st.caption("DELETE RECORDS")
+            delete_options = dataset_option_map(record_candidates, dataset_key)
+            selected_labels = st.multiselect("Select records to delete", list(delete_options.keys()))
+            selected_ids = [delete_options[label] for label in selected_labels]
+            if st.button("Delete selected records", type="secondary", disabled=not selected_ids):
+                deleted = store.delete_reference(dataset_key, selected_ids)
+                history_logged = store.log_edit_history(
+                    user,
+                    "DELETE",
+                    dataset_key,
+                    details=f"Deleted {deleted} record(s): {', '.join(str(record_id) for record_id in selected_ids[:20])}",
+                )
+                set_data_management_success(f"Successfully deleted {deleted} {dataset_label.lower()} record(s).")
+                if not history_logged:
+                    set_data_management_warning("The data was deleted, but edit history was not recorded because the edit_history table is unavailable.")
+                st.rerun()
 
     with tab_form:
-        update_search = st.text_input(
-            "Search record to update",
-            placeholder=dataset_search_placeholder(dataset_key),
-            key="update_record_search",
-        )
-        update_candidates = search_dataset(dataset, update_search, dataset_key)
-        update_options = {"New record": None, **dataset_option_map(update_candidates, dataset_key)}
-        selected = st.selectbox("Mode", list(update_options.keys()))
+        with st.container(border=True):
+            st.caption("FIND RECORD")
+            update_search = st.text_input(
+                "Search record to update",
+                placeholder=dataset_search_placeholder(dataset_key),
+                key="update_record_search",
+            )
+            update_candidates = search_dataset(dataset, update_search, dataset_key)
+            update_options = {"New record": None, **dataset_option_map(update_candidates, dataset_key)}
+            selected = st.selectbox("Mode", list(update_options.keys()))
         selected_row = None
         if selected != "New record":
             selected_id = str(update_options[selected])
             selected_row = dataset.loc[dataset["id"].astype(str) == selected_id].iloc[0]
 
-        with st.form(f"record_form_{dataset_key}"):
-            payload = dataset_form_fields(writable_columns, selected_row)
+        with st.container(border=True):
+            st.caption("RECORD DETAILS")
+            with st.form(f"record_form_{dataset_key}"):
+                payload = dataset_form_fields(writable_columns, selected_row)
 
-            submitted = st.form_submit_button("Save record", use_container_width=True)
-            if submitted:
-                record_id = None if selected == "New record" else update_options[selected]
-                try:
-                    store.upsert_reference(dataset_key, payload, record_id)
-                    action = "created" if selected == "New record" else "updated"
-                    history_logged = store.log_edit_history(
-                        user,
-                        action.upper(),
-                        dataset_key,
-                        record_id=record_id,
-                        details=f"{action.title()} {dataset_label.lower()} record with fields: {', '.join(payload.keys())}",
-                    )
-                    set_data_management_success(f"Successfully {action} {dataset_label.lower()} record.")
-                    if not history_logged:
-                        set_data_management_warning("The data was saved, but edit history was not recorded because the edit_history table is unavailable.")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"Unable to save record: {exc}")
+                submitted = st.form_submit_button("Save record", use_container_width=True)
+                if submitted:
+                    record_id = None if selected == "New record" else update_options[selected]
+                    try:
+                        store.upsert_reference(dataset_key, payload, record_id)
+                        action = "created" if selected == "New record" else "updated"
+                        history_logged = store.log_edit_history(
+                            user,
+                            action.upper(),
+                            dataset_key,
+                            record_id=record_id,
+                            details=f"{action.title()} {dataset_label.lower()} record with fields: {', '.join(payload.keys())}",
+                        )
+                        set_data_management_success(f"Successfully {action} {dataset_label.lower()} record.")
+                        if not history_logged:
+                            set_data_management_warning("The data was saved, but edit history was not recorded because the edit_history table is unavailable.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Unable to save record: {exc}")
 
     with tab_import:
-        st.caption("Choose the fields to update. Imported rows only update the selected columns; other Supabase columns remain unchanged.")
-        default_match_column = natural_key_column(dataset_key)
-        match_column = st.selectbox(
-            "Match rows by",
-            ["id", default_match_column],
-            index=1,
-            help="Use id for exact row updates, or the natural key to update the first matching row.",
-        )
-        update_choices = [
-            column
-            for column in writable_columns
-            if not (match_column != "id" and column == match_column)
-        ]
-        default_update_columns = update_choices[:1] if update_choices else []
-        selected_update_columns = st.multiselect(
-            "Columns to update",
-            update_choices,
-            default=default_update_columns,
-            help="Only these columns will be changed during bulk import.",
-        )
+        with st.container(border=True):
+            st.caption("IMPORT SETUP")
+            st.caption("Choose the fields to update. Imported rows only update the selected columns; other Supabase columns remain unchanged.")
+            default_match_column = natural_key_column(dataset_key)
+            match_column = st.selectbox(
+                "Match rows by",
+                ["id", default_match_column],
+                index=1,
+                help="Use id for exact row updates, or the natural key to update the first matching row.",
+            )
+            update_choices = [
+                column
+                for column in writable_columns
+                if not (match_column != "id" and column == match_column)
+            ]
+            default_update_columns = update_choices[:1] if update_choices else []
+            selected_update_columns = st.multiselect(
+                "Columns to update",
+                update_choices,
+                default=default_update_columns,
+                help="Only these columns will be changed during bulk import.",
+            )
         if not selected_update_columns:
             st.info("Choose at least one column to update before downloading a template or uploading data.")
         else:
-            template = selected_upload_template(writable_columns, selected_update_columns, match_column)
-            template_csv = template.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "Download CSV template",
-                template_csv,
-                f"{dataset_key}_template.csv",
-                "text/csv",
-            )
-            uploaded = st.file_uploader("Upload file", type=["csv", "xlsx", "xls"], key=f"upload_{dataset_key}")
+            with st.container(border=True):
+                st.caption("TEMPLATE AND UPLOAD")
+                template = selected_upload_template(writable_columns, selected_update_columns, match_column)
+                template_csv = template.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    "Download CSV template",
+                    template_csv,
+                    f"{dataset_key}_template.csv",
+                    "text/csv",
+                )
+                uploaded = st.file_uploader("Upload file", type=["csv", "xlsx", "xls"], key=f"upload_{dataset_key}")
             if uploaded:
                 try:
                     uploaded.seek(0)
@@ -3351,33 +3367,33 @@ def data_management_page(records: pd.DataFrame, user: dict, store: SupabaseStore
                         selected_update_columns,
                         match_column,
                     )
-                    st.subheader("Preview")
-                    preview_display = preview.drop(columns=[UPLOAD_ROW_NUMBER_COLUMN], errors="ignore")
-                    render_data_table(preview_display, f"{dataset_key}_import_preview", f"{dataset_label} Import Preview")
-                    if errors:
-                        st.error("Please fix the validation errors before saving.")
-                        st.write(errors)
-                    else:
-                        st.info(f"{len(preview):,} row(s) ready to save into Supabase.")
-                        with st.form(f"bulk_import_save_form_{dataset_key}", clear_on_submit=False):
-                            submitted_import = st.form_submit_button(
-                                "Save imported data to Supabase",
-                                type="primary",
-                                use_container_width=True,
-                            )
-                        if submitted_import:
-                            saved_import = save_bulk_import(
-                                store,
-                                user,
-                                dataset_key,
-                                dataset_label,
-                                preview,
-                                match_column,
-                                selected_update_columns,
-                            )
-                            if saved_import:
-                                st.rerun()
-
+                    with st.container(border=True):
+                        st.caption("IMPORT PREVIEW")
+                        preview_display = preview.drop(columns=[UPLOAD_ROW_NUMBER_COLUMN], errors="ignore")
+                        render_data_table(preview_display, f"{dataset_key}_import_preview", f"{dataset_label} Import Preview")
+                        if errors:
+                            st.error("Please fix the validation errors before saving.")
+                            st.write(errors)
+                        else:
+                            st.info(f"{len(preview):,} row(s) ready to save into Supabase.")
+                            with st.form(f"bulk_import_save_form_{dataset_key}", clear_on_submit=False):
+                                submitted_import = st.form_submit_button(
+                                    "Save imported data to Supabase",
+                                    type="primary",
+                                    use_container_width=True,
+                                )
+                            if submitted_import:
+                                saved_import = save_bulk_import(
+                                    store,
+                                    user,
+                                    dataset_key,
+                                    dataset_label,
+                                    preview,
+                                    match_column,
+                                    selected_update_columns,
+                                )
+                                if saved_import:
+                                    st.rerun()
 def dataset_frame(dataset_key: str, refs: dict[str, pd.DataFrame]) -> pd.DataFrame:
     df = refs.get(dataset_key, pd.DataFrame()).copy()
     if dataset_key == "results" and "students" in refs and not df.empty:

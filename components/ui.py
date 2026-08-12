@@ -220,8 +220,8 @@ def inject_theme() -> None:
         div.element-container:has(.app-header),
         div[data-testid="stMarkdownContainer"]:has(.app-header) {
             position: sticky !important;
-            top: 0 !important;
-            z-index: 1000 !important;
+            top: 3.25rem !important;
+            z-index: 999 !important;
             background: linear-gradient(180deg, rgba(246, 247, 251, 0.98), rgba(246, 247, 251, 0.9));
             padding: 0.35rem 0 0.4rem;
             margin: -0.35rem 0 0.9rem;
@@ -230,8 +230,8 @@ def inject_theme() -> None:
 
         .app-header {
             position: sticky;
-            top: 0;
-            z-index: 1001;
+            top: 3.25rem;
+            z-index: 1000;
             background:
                 linear-gradient(135deg, #171b4f 0%, #25298c 58%, #111432 100%);
             backdrop-filter: blur(16px);

@@ -123,19 +123,91 @@ def inject_theme() -> None:
 
         [data-testid="stSidebar"] {
             background:
-                linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(246,247,252,0.98) 100%);
-            border-right: 1px solid var(--app-border);
+                linear-gradient(180deg, #dce2f2 0%, #cfd7eb 48%, #c4cde4 100%) !important;
+            border-right: 1px solid #9aa8c7;
         }
 
 
         [data-testid="stSidebar"] * {
-            color: var(--app-ink);
+            color: #111827;
         }
 
         [data-testid="stSidebar"] h1,
         [data-testid="stSidebar"] h2,
         [data-testid="stSidebar"] h3 {
             font-weight: 750;
+            color: #071127 !important;
+        }
+
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] p {
+            color: #071127 !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+            color: #071127 !important;
+        }
+
+        [data-testid="stSidebar"] hr {
+            border-color: rgba(34, 48, 86, 0.24) !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stRadio"] label {
+            color: #071127 !important;
+            font-weight: 650;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] {
+            gap: 0.22rem;
+        }
+
+        [data-testid="stSidebar"] [data-baseweb="radio"] {
+            background: rgba(255, 255, 255, 0.38);
+            border-radius: 999px;
+            padding: 0.12rem 0.18rem;
+        }
+
+        [data-testid="stSidebar"] [data-baseweb="radio"] div {
+            color: #071127 !important;
+            font-weight: 650;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stMultiSelect"] label,
+        [data-testid="stSidebar"] [data-testid="stSelectbox"] label {
+            color: #071127 !important;
+            font-weight: 750 !important;
+        }
+
+        [data-testid="stSidebar"] [data-baseweb="select"] > div {
+            background: #f8fafc !important;
+            border: 1px solid #8fa0c2 !important;
+            border-radius: 8px !important;
+            box-shadow: 0 5px 14px rgba(31, 42, 76, 0.08);
+        }
+
+        [data-testid="stSidebar"] [data-baseweb="select"] span,
+        [data-testid="stSidebar"] [data-baseweb="select"] div {
+            color: #1f2937 !important;
+        }
+
+        [data-testid="stSidebar"] [data-baseweb="select"] svg {
+            fill: #111827 !important;
+        }
+
+        [data-testid="stSidebar"] .stButton > button {
+            background: #ffffff !important;
+            border: 1px solid #8fa0c2 !important;
+            color: var(--app-accent-dark) !important;
+            box-shadow: 0 5px 14px rgba(31, 42, 76, 0.08);
+        }
+
+        [data-testid="stSidebar"] .stButton > button * {
+            color: var(--app-accent-dark) !important;
+        }
+
+        [data-testid="stSidebar"] .stButton > button:hover {
+            background: #eef2ff !important;
+            border-color: var(--app-accent) !important;
         }
 
         h1, h2, h3 {

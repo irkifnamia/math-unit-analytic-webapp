@@ -2653,20 +2653,21 @@ def progress_rank_page(records: pd.DataFrame, filters: dict[str, list[str]], gro
         return
 
     category_options = list(sections_by_category.keys())
-    selected_category = st.radio(
-        "Kategori",
-        category_options,
-        horizontal=True,
-        key=f"{group_column}_progress_category",
-    )
+    control_columns = st.columns(3)
+    with control_columns[0]:
+        selected_category = st.selectbox(
+            "Kategori",
+            category_options,
+            key=f"{group_column}_progress_category_select",
+        )
     sections = sections_by_category[selected_category]
     section_labels = [section[0] for section in sections]
-    selected_section_label = st.radio(
-        "Assessment",
-        section_labels,
-        horizontal=True,
-        key=f"{group_column}_{selected_category}_progress_assessment",
-    )
+    with control_columns[1]:
+        selected_section_label = st.selectbox(
+            "Assessment",
+            section_labels,
+            key=f"{group_column}_{selected_category}_progress_assessment_select",
+        )
     section_lookup = {section[0]: section for section in sections}
     section_label, frame, value_column, metric_label, axis_title = section_lookup[selected_section_label]
     render_progress_section(
@@ -2677,6 +2678,7 @@ def progress_rank_page(records: pd.DataFrame, filters: dict[str, list[str]], gro
         metric_label,
         axis_title,
         records,
+        control_columns[2],
     )
 
 
@@ -5170,13 +5172,22 @@ def render_progress_section(
     metric_label: str,
     axis_title: str,
     base_records: pd.DataFrame,
+    system_control_container: object | None = None,
 ) -> None:
-    selected_system = st.radio(
-        "Sistem",
-        PROGRESS_SYSTEM_TABS,
-        horizontal=True,
-        key=f"{group_column}_{section_label}_progress_system",
-    )
+    if system_control_container is not None:
+        system_parent = system_control_container
+        with system_parent:
+            selected_system = st.selectbox(
+                "Sistem",
+                PROGRESS_SYSTEM_TABS,
+                key=f"{group_column}_{section_label}_progress_system_select",
+            )
+    else:
+        selected_system = st.selectbox(
+            "Sistem",
+            PROGRESS_SYSTEM_TABS,
+            key=f"{group_column}_{section_label}_progress_system_select",
+        )
     system_frames = dict(split_system_frames(frame))
     system_label = selected_system
     system_frame = system_frames.get(system_label, frame.iloc[0:0])

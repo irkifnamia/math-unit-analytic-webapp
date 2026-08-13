@@ -357,19 +357,6 @@ def inject_theme() -> None:
             margin: 0 0.28rem;
         }
 
-        .role-pill {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 999px;
-            border: 1px solid rgba(255, 232, 26, 0.52);
-            color: var(--app-yellow);
-            font-size: 0.78rem;
-            font-weight: 700;
-            padding: 0.18rem 0.55rem;
-            margin-left: 0;
-            background: rgba(255, 232, 26, 0.1);
-        }
 
         [data-testid="stTabs"] button {
             color: var(--app-muted);
@@ -515,7 +502,7 @@ def inject_theme() -> None:
 
 
 def page_header(title: str, caption: str, role: str | None = None) -> None:
-    role_markup = f"<span class='role-pill'>{escape(str(role))}</span>" if role else ""
+
     user = st.session_state.get("user", {}) if hasattr(st, "session_state") else {}
     user_name = str(user.get("full_name", "")).strip()
     user_role = str(user.get("role", role or "")).strip()
@@ -530,7 +517,7 @@ def page_header(title: str, caption: str, role: str | None = None) -> None:
         f"""
         <div class="app-header">
             <div class="app-header-line">
-                <h1>{escape(title.upper())} {role_markup}</h1>
+                <h1>{escape(title.upper())}</h1>
                 {user_markup}
             </div>
         </div>

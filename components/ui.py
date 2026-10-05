@@ -345,6 +345,22 @@ def inject_theme() -> None:
 
         div[data-testid="stMetricValue"] {
             color: var(--app-ink);
+            font-size: clamp(1.45rem, 2vw, 2.15rem) !important;
+            line-height: 1.08 !important;
+        }
+
+        div[data-testid="stMetricValue"] > div {
+            font-size: inherit !important;
+            line-height: inherit !important;
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: clip !important;
+        }
+
+        div[data-testid="stMetricLabel"] p {
+            font-size: 0.76rem !important;
+            line-height: 1.15 !important;
+            white-space: normal !important;
         }
 
         div[data-testid="stElementContainer"]:has(.app-header),

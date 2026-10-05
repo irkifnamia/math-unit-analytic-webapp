@@ -3777,47 +3777,60 @@ def trial_analysis_page(records: pd.DataFrame, user: dict, store: SupabaseStore)
     control_columns = st.columns(4)
     with control_columns[0]:
         selected_test = st.selectbox("Test", tests, key="trial_analysis_test")
-    test_frame = analysis[analysis["test"] == selected_test].copy()
+    full_test_frame = analysis[analysis["test"] == selected_test].copy()
 
     with control_columns[1]:
         section_options = ["ALL", *list(TRIAL_SECTION_QUESTIONS.keys())]
         selected_section = st.selectbox("Section", section_options, key="trial_analysis_section")
-    if selected_section != "ALL":
-        test_frame = test_frame[test_frame["section"] == selected_section].copy()
-
     with control_columns[2]:
         group_options = ["KELAS", "PENSYARAH", "SISTEM", "PROGRAM", "JURUSAN", "SUBJEK"]
         group_column = st.selectbox("Matrix group", group_options, key="trial_analysis_group")
+
+    final_summary = trial_student_final_summary(full_test_frame, selected_test)
+    final_summary = filter_trial_final_summary(final_summary, records)
     with control_columns[3]:
-        minimum_attempts = st.number_input("Minimum responses", min_value=1, max_value=1000, value=1, step=1)
+        final_mark_range = st.slider(
+            "Final mark %",
+            min_value=0,
+            max_value=100,
+            value=(0, 100),
+            step=1,
+            key="trial_analysis_final_mark_range",
+        )
+
+    filtered_final = final_summary[
+        final_summary["final_percent"].between(final_mark_range[0], final_mark_range[1], inclusive="both")
+    ].copy() if not final_summary.empty and "final_percent" in final_summary else final_summary
+    allowed_students = set(filtered_final.get("no_matrik", pd.Series(dtype=str)).dropna().astype(str).str.strip())
+    test_frame = full_test_frame[full_test_frame["no_matrik"].astype(str).str.strip().isin(allowed_students)].copy()
+    if selected_section != "ALL":
+        test_frame = test_frame[test_frame["section"] == selected_section].copy()
 
     if test_frame.empty:
         blank_state("No trial marks match the selected filters.")
         return
 
     question_summary = trial_question_summary(test_frame)
-    section_summary = trial_section_summary(analysis[analysis["test"] == selected_test].copy())
-    final_summary = trial_student_final_summary(analysis[analysis["test"] == selected_test].copy(), selected_test)
-    filtered_final = filter_trial_final_summary(final_summary, records)
+    section_summary = trial_section_summary(test_frame.copy())
     filtered_question = test_frame.copy()
 
     render_trial_kpis(filtered_question, filtered_final)
 
     left, right = st.columns([1.15, 1])
     with left:
-        render_trial_question_chart(question_summary, minimum_attempts, selected_test)
+        render_trial_question_chart(question_summary, selected_test)
     with right:
         render_trial_section_chart(section_summary, selected_test)
 
     left, right = st.columns(2)
     with left:
-        render_trial_group_question_heatmap(filtered_question, group_column, minimum_attempts, selected_test)
+        render_trial_group_question_heatmap(filtered_question, group_column, selected_test)
     with right:
         render_trial_final_distribution(filtered_final, selected_test)
 
     with st.container(border=True):
         st.caption("QUESTION MATRIX")
-        question_matrix = trial_group_question_matrix(filtered_question, group_column, minimum_attempts)
+        question_matrix = trial_group_question_matrix(filtered_question, group_column)
         if question_matrix.empty:
             st.info("No matrix data available for the selected group.")
         else:
@@ -3825,7 +3838,7 @@ def trial_analysis_page(records: pd.DataFrame, user: dict, store: SupabaseStore)
 
     with st.container(border=True):
         st.caption("SECTION AND FINAL MATRIX")
-        section_matrix = trial_section_final_matrix(analysis[analysis["test"] == selected_test].copy(), records, group_column)
+        section_matrix = trial_section_final_matrix(test_frame.copy(), records, group_column)
         if section_matrix.empty:
             st.info("No section or final matrix data available.")
         else:
@@ -4030,8 +4043,8 @@ def format_percentage(value: object) -> str:
         return "-"
 
 
-def render_trial_question_chart(summary: pd.DataFrame, minimum_attempts: int, selected_test: str) -> None:
-    chart = summary[summary["Responses"] >= minimum_attempts].copy() if not summary.empty else summary
+def render_trial_question_chart(summary: pd.DataFrame, selected_test: str) -> None:
+    chart = summary.copy() if not summary.empty else summary
     if chart.empty:
         empty_chart_placeholder("Question Performance", "No question data available.", key="trial_question_empty")
         return
@@ -4069,7 +4082,7 @@ def render_trial_section_chart(summary: pd.DataFrame, selected_test: str) -> Non
     st.plotly_chart(fig, use_container_width=True, key="trial_section_performance")
 
 
-def trial_group_question_matrix(df: pd.DataFrame, group_column: str, minimum_attempts: int = 1) -> pd.DataFrame:
+def trial_group_question_matrix(df: pd.DataFrame, group_column: str) -> pd.DataFrame:
     if df.empty or group_column not in df.columns:
         return pd.DataFrame()
     source = df.copy()
@@ -4081,7 +4094,6 @@ def trial_group_question_matrix(df: pd.DataFrame, group_column: str, minimum_att
         source.groupby([group_column, "question"], as_index=False)
         .agg(Average_Percent=("percent_correct", "mean"), Responses=("mark", "count"))
     )
-    grouped = grouped[grouped["Responses"] >= minimum_attempts]
     if grouped.empty:
         return pd.DataFrame()
     matrix = grouped.pivot_table(index=group_column, columns="question", values="Average_Percent", aggfunc="mean")
@@ -4089,8 +4101,8 @@ def trial_group_question_matrix(df: pd.DataFrame, group_column: str, minimum_att
     return matrix.reindex(columns=question_order).round(1)
 
 
-def render_trial_group_question_heatmap(df: pd.DataFrame, group_column: str, minimum_attempts: int, selected_test: str) -> None:
-    matrix = trial_group_question_matrix(df, group_column, minimum_attempts)
+def render_trial_group_question_heatmap(df: pd.DataFrame, group_column: str, selected_test: str) -> None:
+    matrix = trial_group_question_matrix(df, group_column)
     if matrix.empty:
         empty_chart_placeholder(f"{group_column} Question Matrix", "No matrix data available.", key=f"trial_{safe_key(group_column)}_empty")
         return

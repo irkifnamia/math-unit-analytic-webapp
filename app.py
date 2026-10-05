@@ -112,6 +112,22 @@ TRIAL_UPLOAD_COLUMN_ALIASES = {
     "ujian": "TEST",
     "trial": "TEST",
 }
+MATH_SPARK_QUESTION_MAX_MARKS = {
+    "A1": 10,
+    "A2": 9,
+    "A3": 6,
+    "B1": 5,
+    "B2": 11,
+    "B3": 7,
+    "B4": 12,
+    "B5": 15,
+    "B6": 15,
+    "B7": 10,
+}
+TRIAL_SECTION_QUESTIONS = {
+    "SECTION A": ["A1", "A2", "A3"],
+    "SECTION B": ["B1", "B2", "B3", "B4", "B5", "B6", "B7"],
+}
 DATASET_SEARCH_COLUMNS = {
     "students": ["NO MATRIK", "NAMA PELAJAR", "KELAS", "SUBJEK", "JURUSAN", "SISTEM"],
     "lecturers": ["KELAS", "PENSYARAH"],
@@ -344,6 +360,7 @@ def sidebar_navigation(
         "ADMIN",
         "DATA MANAGEMENT",
         "TRIAL DATA",
+        "TRIAL ANALYSIS",
         "DEMOGRAPHY",
         "PROFILING",
         "DOWNLOAD",
@@ -3736,6 +3753,405 @@ create index if not exists trial_question_marks_question_idx
 on public.trial_question_marks (question);"""
 
 
+def trial_analysis_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> None:
+    page_header(
+        "TRIAL ANALYSIS",
+        "Review question, section, and final performance for trial tests.",
+        user["role"],
+    )
+    marks = load_trial_question_marks(store)
+    if marks.empty:
+        blank_state("No trial question marks are available yet. Upload Math Spark or Ultimate Spark in Trial Data.")
+        return
+
+    analysis = build_trial_analysis_frame(marks, records)
+    if analysis.empty:
+        blank_state("No valid trial marks are available for analysis.")
+        return
+
+    tests = sorted(analysis["test"].dropna().unique().tolist())
+    control_columns = st.columns(4)
+    with control_columns[0]:
+        selected_test = st.selectbox("Test", tests, key="trial_analysis_test")
+    test_frame = analysis[analysis["test"] == selected_test].copy()
+
+    with control_columns[1]:
+        section_options = ["ALL", *list(TRIAL_SECTION_QUESTIONS.keys())]
+        selected_section = st.selectbox("Section", section_options, key="trial_analysis_section")
+    if selected_section != "ALL":
+        test_frame = test_frame[test_frame["section"] == selected_section].copy()
+
+    with control_columns[2]:
+        group_options = ["KELAS", "PENSYARAH", "SISTEM", "PROGRAM", "SUBJEK"]
+        group_column = st.selectbox("Matrix group", group_options, key="trial_analysis_group")
+    with control_columns[3]:
+        minimum_attempts = st.number_input("Minimum responses", min_value=1, max_value=1000, value=1, step=1)
+
+    if test_frame.empty:
+        blank_state("No trial marks match the selected filters.")
+        return
+
+    question_summary = trial_question_summary(test_frame)
+    section_summary = trial_section_summary(analysis[analysis["test"] == selected_test].copy())
+    final_summary = trial_student_final_summary(analysis[analysis["test"] == selected_test].copy(), selected_test)
+    filtered_final = filter_trial_final_summary(final_summary, records)
+    filtered_question = test_frame.copy()
+
+    render_trial_kpis(filtered_question, filtered_final)
+
+    left, right = st.columns([1.15, 1])
+    with left:
+        render_trial_question_chart(question_summary, minimum_attempts, selected_test)
+    with right:
+        render_trial_section_chart(section_summary, selected_test)
+
+    left, right = st.columns(2)
+    with left:
+        render_trial_group_question_heatmap(filtered_question, group_column, minimum_attempts, selected_test)
+    with right:
+        render_trial_final_distribution(filtered_final, selected_test)
+
+    with st.container(border=True):
+        st.caption("QUESTION MATRIX")
+        question_matrix = trial_group_question_matrix(filtered_question, group_column, minimum_attempts)
+        if question_matrix.empty:
+            st.info("No matrix data available for the selected group.")
+        else:
+            render_data_table(question_matrix.reset_index(), f"trial_{safe_key(group_column)}_question_matrix", "Trial Question Matrix")
+
+    with st.container(border=True):
+        st.caption("SECTION AND FINAL MATRIX")
+        section_matrix = trial_section_final_matrix(analysis[analysis["test"] == selected_test].copy(), records, group_column)
+        if section_matrix.empty:
+            st.info("No section or final matrix data available.")
+        else:
+            render_data_table(section_matrix.reset_index(), f"trial_{safe_key(group_column)}_section_final_matrix", "Trial Section and Final Matrix")
+
+    with st.container(border=True):
+        st.caption("STUDENT PERFORMANCE")
+        student_table = trial_student_performance_table(filtered_final)
+        render_data_table(student_table, "trial_student_performance", "Trial Student Performance")
+
+
+def build_trial_analysis_frame(marks: pd.DataFrame, records: pd.DataFrame) -> pd.DataFrame:
+    required = {"no_matrik", "test", "question", "mark"}
+    if marks.empty or not required.issubset(marks.columns):
+        return pd.DataFrame()
+    df = marks[list(required)].copy()
+    df["no_matrik"] = df["no_matrik"].fillna("").astype(str).str.strip()
+    df["test"] = df["test"].fillna("").astype(str).str.upper().str.strip()
+    df["question"] = df["question"].fillna("").astype(str).str.upper().str.strip()
+    df["mark"] = pd.to_numeric(df["mark"], errors="coerce")
+    df = df[(df["no_matrik"] != "") & (df["test"] != "") & (df["question"] != "") & df["mark"].notna()].copy()
+    if df.empty:
+        return df
+    context_columns = ["NO MATRIK", "NAMA PELAJAR", "KELAS", "PENSYARAH", "SISTEM", "PROGRAM", "SUBJEK"]
+    available_context = [column for column in context_columns if column in records.columns]
+    if "NO MATRIK" in available_context:
+        context = records[available_context].drop_duplicates("NO MATRIK")
+        df = df.merge(context, left_on="no_matrik", right_on="NO MATRIK", how="left")
+    df["section"] = df["question"].apply(trial_question_section)
+    df["max_mark"] = df.apply(lambda row: trial_question_max_mark(row["test"], row["question"], marks), axis=1)
+    df = df[df["max_mark"].fillna(0) > 0].copy()
+    df["percent_correct"] = (df["mark"] / df["max_mark"] * 100).clip(lower=0)
+    return df
+
+
+def trial_question_section(question: object) -> str:
+    question_text = str(question).upper().strip()
+    for section, questions in TRIAL_SECTION_QUESTIONS.items():
+        if question_text in questions:
+            return section
+    if question_text.startswith("A"):
+        return "SECTION A"
+    if question_text.startswith("B"):
+        return "SECTION B"
+    return "OTHER"
+
+
+def trial_question_max_mark(test: object, question: object, marks: pd.DataFrame) -> float:
+    test_text = str(test).upper().strip()
+    question_text = str(question).upper().strip()
+    if test_text == "MATH SPARK" and question_text in MATH_SPARK_QUESTION_MAX_MARKS:
+        return float(MATH_SPARK_QUESTION_MAX_MARKS[question_text])
+    subset = marks[
+        (marks.get("test", pd.Series(dtype=str)).fillna("").astype(str).str.upper().str.strip() == test_text)
+        & (marks.get("question", pd.Series(dtype=str)).fillna("").astype(str).str.upper().str.strip() == question_text)
+    ]
+    max_value = pd.to_numeric(subset.get("mark", pd.Series(dtype=float)), errors="coerce").max()
+    if pd.isna(max_value) or float(max_value) <= 0:
+        return 1.0
+    return float(max_value)
+
+
+def trial_question_order(questions: list[str]) -> list[str]:
+    def sort_key(question: str) -> tuple[str, int, str]:
+        text = str(question).upper().strip()
+        prefix = "".join(character for character in text if character.isalpha()) or text
+        digits = "".join(character for character in text if character.isdigit())
+        return prefix, int(digits or 999), text
+    return sorted(questions, key=sort_key)
+
+
+def trial_question_summary(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+    summary = (
+        df.groupby(["section", "question", "max_mark"], as_index=False)
+        .agg(
+            Average_Mark=("mark", "mean"),
+            Average_Percent=("percent_correct", "mean"),
+            Responses=("mark", "count"),
+        )
+    )
+    question_order = trial_question_order(summary["question"].unique().tolist())
+    summary["question"] = pd.Categorical(summary["question"], categories=question_order, ordered=True)
+    return summary.sort_values(["section", "question"])
+
+
+def trial_section_summary(df: pd.DataFrame) -> pd.DataFrame:
+    final = trial_student_section_summary(df)
+    if final.empty:
+        return pd.DataFrame()
+    return (
+        final.groupby("section", as_index=False)
+        .agg(
+            Average_Mark=("section_mark", "mean"),
+            Max_Mark=("section_max", "first"),
+            Average_Percent=("section_percent", "mean"),
+            Students=("no_matrik", "nunique"),
+        )
+        .sort_values("section")
+    )
+
+
+def trial_student_section_summary(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+    expected = (
+        df[["test", "section", "question", "max_mark"]]
+        .drop_duplicates(["test", "section", "question"])
+        .groupby(["test", "section"], as_index=False)["max_mark"]
+        .sum()
+        .rename(columns={"max_mark": "section_max"})
+    )
+    actual = (
+        df.groupby(["test", "no_matrik", "section"], as_index=False)["mark"]
+        .sum()
+        .rename(columns={"mark": "section_mark"})
+    )
+    merged = actual.merge(expected, on=["test", "section"], how="left")
+    merged["section_percent"] = (merged["section_mark"] / merged["section_max"] * 100).clip(lower=0)
+    return merged
+
+
+def trial_student_final_summary(df: pd.DataFrame, selected_test: str) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+    expected_total = (
+        df[["test", "question", "max_mark"]]
+        .drop_duplicates(["test", "question"])
+        .groupby("test")["max_mark"]
+        .sum()
+        .get(selected_test, 0)
+    )
+    if not expected_total:
+        return pd.DataFrame()
+    final = (
+        df.groupby("no_matrik", as_index=False)["mark"]
+        .sum()
+        .rename(columns={"mark": "final_mark"})
+    )
+    final["final_max"] = float(expected_total)
+    final["final_percent"] = (final["final_mark"] / final["final_max"] * 100).clip(lower=0)
+    context_columns = ["no_matrik", "NAMA PELAJAR", "KELAS", "PENSYARAH", "SISTEM", "PROGRAM", "SUBJEK"]
+    available = [column for column in context_columns if column in df.columns]
+    context = df[available].drop_duplicates("no_matrik") if "no_matrik" in available else pd.DataFrame()
+    if not context.empty:
+        final = final.merge(context, on="no_matrik", how="left")
+    sections = trial_student_section_summary(df)
+    if not sections.empty:
+        section_pivot = sections.pivot_table(index="no_matrik", columns="section", values="section_percent", aggfunc="mean")
+        section_pivot = section_pivot.rename(columns={column: f"{column} %" for column in section_pivot.columns})
+        final = final.merge(section_pivot.reset_index(), on="no_matrik", how="left")
+    return final.sort_values("final_percent", ascending=False, na_position="last")
+
+
+def filter_trial_final_summary(final: pd.DataFrame, records: pd.DataFrame) -> pd.DataFrame:
+    if final.empty:
+        return final
+    return final
+
+
+def render_trial_kpis(question_frame: pd.DataFrame, final_frame: pd.DataFrame) -> None:
+    cards = st.columns(4)
+    avg_question = question_frame["percent_correct"].mean() if not question_frame.empty else None
+    avg_final = final_frame["final_percent"].mean() if not final_frame.empty else None
+    lowest_question = "-"
+    if not question_frame.empty:
+        summary = trial_question_summary(question_frame)
+        if not summary.empty:
+            row = summary.sort_values("Average_Percent", ascending=True).iloc[0]
+            lowest_question = f"{row['question']} ({row['Average_Percent']:.1f}%)"
+    cards[0].metric("Average Question Correct", format_percentage(avg_question))
+    cards[1].metric("Average Final", format_percentage(avg_final))
+    cards[2].metric("Students", f"{final_frame['no_matrik'].nunique():,}" if not final_frame.empty else "0")
+    cards[3].metric("Weakest Question", lowest_question)
+
+
+def format_percentage(value: object) -> str:
+    try:
+        if pd.isna(value):
+            return "-"
+        return f"{float(value):.1f}%"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def render_trial_question_chart(summary: pd.DataFrame, minimum_attempts: int, selected_test: str) -> None:
+    chart = summary[summary["Responses"] >= minimum_attempts].copy() if not summary.empty else summary
+    if chart.empty:
+        empty_chart_placeholder("Question Performance", "No question data available.", key="trial_question_empty")
+        return
+    fig = px.bar(
+        chart,
+        x="question",
+        y="Average_Percent",
+        color="section",
+        text=chart["Average_Percent"].round(1),
+        title=f"{selected_test} Question Performance (% Correct)",
+        labels={"Average_Percent": "% Correct", "question": "Question", "section": "Section"},
+        color_discrete_sequence=["#ed1c24", "#2d3192", "#08756f"],
+    )
+    fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside", cliponaxis=False)
+    fig.update_layout(yaxis=dict(range=[0, 105]), height=390, margin=dict(l=20, r=20, t=55, b=35))
+    st.plotly_chart(fig, use_container_width=True, key="trial_question_performance")
+
+
+def render_trial_section_chart(summary: pd.DataFrame, selected_test: str) -> None:
+    if summary.empty:
+        empty_chart_placeholder("Section Performance", "No section data available.", key="trial_section_empty")
+        return
+    fig = px.bar(
+        summary,
+        x="section",
+        y="Average_Percent",
+        text=summary["Average_Percent"].round(1),
+        title=f"{selected_test} Section Performance (% Correct)",
+        labels={"Average_Percent": "% Correct", "section": "Section"},
+        color="section",
+        color_discrete_sequence=["#ed1c24", "#2d3192", "#08756f"],
+    )
+    fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside", showlegend=False, cliponaxis=False)
+    fig.update_layout(yaxis=dict(range=[0, 105]), height=390, margin=dict(l=20, r=20, t=55, b=35))
+    st.plotly_chart(fig, use_container_width=True, key="trial_section_performance")
+
+
+def trial_group_question_matrix(df: pd.DataFrame, group_column: str, minimum_attempts: int = 1) -> pd.DataFrame:
+    if df.empty or group_column not in df.columns:
+        return pd.DataFrame()
+    source = df.copy()
+    source[group_column] = source[group_column].fillna("").astype(str).str.strip()
+    source = source[source[group_column] != ""]
+    if source.empty:
+        return pd.DataFrame()
+    grouped = (
+        source.groupby([group_column, "question"], as_index=False)
+        .agg(Average_Percent=("percent_correct", "mean"), Responses=("mark", "count"))
+    )
+    grouped = grouped[grouped["Responses"] >= minimum_attempts]
+    if grouped.empty:
+        return pd.DataFrame()
+    matrix = grouped.pivot_table(index=group_column, columns="question", values="Average_Percent", aggfunc="mean")
+    question_order = trial_question_order(matrix.columns.tolist())
+    return matrix.reindex(columns=question_order).round(1)
+
+
+def render_trial_group_question_heatmap(df: pd.DataFrame, group_column: str, minimum_attempts: int, selected_test: str) -> None:
+    matrix = trial_group_question_matrix(df, group_column, minimum_attempts)
+    if matrix.empty:
+        empty_chart_placeholder(f"{group_column} Question Matrix", "No matrix data available.", key=f"trial_{safe_key(group_column)}_empty")
+        return
+    fig = px.imshow(
+        matrix,
+        aspect="auto",
+        text_auto=".1f",
+        color_continuous_scale="RdYlGn",
+        zmin=0,
+        zmax=100,
+        title=f"{selected_test}: {group_column} x Question (% Correct)",
+    )
+    fig.update_layout(height=max(390, min(720, 34 * len(matrix.index) + 150)), margin=dict(l=20, r=20, t=55, b=35))
+    st.plotly_chart(fig, use_container_width=True, key=f"trial_{safe_key(group_column)}_question_heatmap")
+
+
+def render_trial_final_distribution(final: pd.DataFrame, selected_test: str) -> None:
+    if final.empty:
+        empty_chart_placeholder("Final Mark Distribution", "No final mark data available.", key="trial_final_empty")
+        return
+    fig = px.histogram(
+        final,
+        x="final_percent",
+        nbins=12,
+        title=f"{selected_test} Final Mark Distribution",
+        labels={"final_percent": "Final %", "count": "Students"},
+        color_discrete_sequence=["#2d3192"],
+    )
+    fig.update_layout(height=390, margin=dict(l=20, r=20, t=55, b=35))
+    st.plotly_chart(fig, use_container_width=True, key="trial_final_distribution")
+
+
+def trial_section_final_matrix(df: pd.DataFrame, records: pd.DataFrame, group_column: str) -> pd.DataFrame:
+    if df.empty or group_column not in df.columns:
+        return pd.DataFrame()
+    sections = trial_student_section_summary(df)
+    final = trial_student_final_summary(df, df["test"].iloc[0])
+    if sections.empty or final.empty:
+        return pd.DataFrame()
+    context_columns = ["no_matrik", group_column]
+    context = df[[column for column in context_columns if column in df.columns]].drop_duplicates("no_matrik")
+    sections = sections.merge(context, on="no_matrik", how="left")
+    sections[group_column] = sections[group_column].fillna("").astype(str).str.strip()
+    sections = sections[sections[group_column] != ""]
+    section_matrix = sections.pivot_table(index=group_column, columns="section", values="section_percent", aggfunc="mean")
+    final[group_column] = final[group_column].fillna("").astype(str).str.strip() if group_column in final else ""
+    final_group = final[final[group_column] != ""].groupby(group_column)["final_percent"].mean().rename("FINAL")
+    matrix = section_matrix.merge(final_group, left_index=True, right_index=True, how="outer")
+    ordered = [column for column in ["SECTION A", "SECTION B", "FINAL"] if column in matrix.columns]
+    return matrix[ordered].round(1)
+
+
+def trial_student_performance_table(final: pd.DataFrame) -> pd.DataFrame:
+    if final.empty:
+        return final
+    columns = [
+        "no_matrik",
+        "NAMA PELAJAR",
+        "KELAS",
+        "PENSYARAH",
+        "SISTEM",
+        "PROGRAM",
+        "SUBJEK",
+        "SECTION A %",
+        "SECTION B %",
+        "final_mark",
+        "final_max",
+        "final_percent",
+    ]
+    table = final[[column for column in columns if column in final.columns]].copy()
+    rename_map = {
+        "no_matrik": "NO MATRIK",
+        "final_mark": "FINAL MARK",
+        "final_max": "FULL MARK",
+        "final_percent": "FINAL %",
+    }
+    table = table.rename(columns=rename_map)
+    for column in ["SECTION A %", "SECTION B %", "FINAL %"]:
+        if column in table:
+            table[column] = table[column].round(1)
+    return table.sort_values("FINAL %", ascending=True, na_position="last") if "FINAL %" in table else table
+
+
 def save_bulk_import(
     store: SupabaseStore,
     user: dict,
@@ -6171,6 +6587,8 @@ def main() -> None:
         data_management_page(records, user, store)
     elif page == "TRIAL DATA":
         trial_data_page(records, user, store)
+    elif page == "TRIAL ANALYSIS":
+        trial_analysis_page(records, user, store)
 
 
 if __name__ == "__main__":

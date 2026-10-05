@@ -4002,19 +4002,23 @@ def filter_trial_final_summary(final: pd.DataFrame, records: pd.DataFrame) -> pd
 
 
 def render_trial_kpis(question_frame: pd.DataFrame, final_frame: pd.DataFrame) -> None:
-    cards = st.columns(4)
+    cards = st.columns(5)
     avg_question = question_frame["percent_correct"].mean() if not question_frame.empty else None
     avg_final = final_frame["final_percent"].mean() if not final_frame.empty else None
     lowest_question = "-"
+    strongest_question = "-"
     if not question_frame.empty:
         summary = trial_question_summary(question_frame)
         if not summary.empty:
-            row = summary.sort_values("Average_Percent", ascending=True).iloc[0]
-            lowest_question = f"{row['question']} ({row['Average_Percent']:.1f}%)"
-    cards[0].metric("Average Question Correct", format_percentage(avg_question))
-    cards[1].metric("Average Final", format_percentage(avg_final))
-    cards[2].metric("Students", f"{final_frame['no_matrik'].nunique():,}" if not final_frame.empty else "0")
-    cards[3].metric("Weakest Question", lowest_question)
+            weakest_row = summary.sort_values("Average_Percent", ascending=True).iloc[0]
+            strongest_row = summary.sort_values("Average_Percent", ascending=False).iloc[0]
+            lowest_question = f"{weakest_row['question']} ({weakest_row['Average_Percent']:.1f}%)"
+            strongest_question = f"{strongest_row['question']} ({strongest_row['Average_Percent']:.1f}%)"
+    cards[0].metric("Students", f"{final_frame['no_matrik'].nunique():,}" if not final_frame.empty else "0")
+    cards[1].metric("Average Question Correct", format_percentage(avg_question))
+    cards[2].metric("Average Final", format_percentage(avg_final))
+    cards[3].metric("Strongest Question", strongest_question)
+    cards[4].metric("Weakest Question", lowest_question)
 
 
 def format_percentage(value: object) -> str:

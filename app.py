@@ -3629,7 +3629,7 @@ def attach_trial_student_context(trial_marks: pd.DataFrame, records: pd.DataFram
     df = trial_marks.copy()
     if "no_matrik" not in df:
         return df
-    context_columns = ["NO MATRIK", "NAMA PELAJAR", "KELAS", "PENSYARAH", "SISTEM", "PROGRAM", "SUBJEK"]
+    context_columns = ["NO MATRIK", "NAMA PELAJAR", "KELAS", "PENSYARAH", "SISTEM", "PROGRAM", "JURUSAN", "SUBJEK"]
     available_context = [column for column in context_columns if column in records.columns]
     if "NO MATRIK" not in available_context:
         return df
@@ -3763,6 +3763,10 @@ def trial_analysis_page(records: pd.DataFrame, user: dict, store: SupabaseStore)
     if marks.empty:
         blank_state("No trial question marks are available yet. Upload Math Spark or Ultimate Spark in Trial Data.")
         return
+    marks = filter_trial_marks_by_records(marks, records)
+    if marks.empty:
+        blank_state("No trial question marks match the selected global filters.")
+        return
 
     analysis = build_trial_analysis_frame(marks, records)
     if analysis.empty:
@@ -3782,7 +3786,7 @@ def trial_analysis_page(records: pd.DataFrame, user: dict, store: SupabaseStore)
         test_frame = test_frame[test_frame["section"] == selected_section].copy()
 
     with control_columns[2]:
-        group_options = ["KELAS", "PENSYARAH", "SISTEM", "PROGRAM", "SUBJEK"]
+        group_options = ["KELAS", "PENSYARAH", "SISTEM", "PROGRAM", "JURUSAN", "SUBJEK"]
         group_column = st.selectbox("Matrix group", group_options, key="trial_analysis_group")
     with control_columns[3]:
         minimum_attempts = st.number_input("Minimum responses", min_value=1, max_value=1000, value=1, step=1)
@@ -3845,7 +3849,7 @@ def build_trial_analysis_frame(marks: pd.DataFrame, records: pd.DataFrame) -> pd
     df = df[(df["no_matrik"] != "") & (df["test"] != "") & (df["question"] != "") & df["mark"].notna()].copy()
     if df.empty:
         return df
-    context_columns = ["NO MATRIK", "NAMA PELAJAR", "KELAS", "PENSYARAH", "SISTEM", "PROGRAM", "SUBJEK"]
+    context_columns = ["NO MATRIK", "NAMA PELAJAR", "KELAS", "PENSYARAH", "SISTEM", "PROGRAM", "JURUSAN", "SUBJEK"]
     available_context = [column for column in context_columns if column in records.columns]
     if "NO MATRIK" in available_context:
         context = records[available_context].drop_duplicates("NO MATRIK")
@@ -3855,6 +3859,20 @@ def build_trial_analysis_frame(marks: pd.DataFrame, records: pd.DataFrame) -> pd
     df = df[df["max_mark"].fillna(0) > 0].copy()
     df["percent_correct"] = (df["mark"] / df["max_mark"] * 100).clip(lower=0)
     return df
+
+
+def filter_trial_marks_by_records(marks: pd.DataFrame, records: pd.DataFrame) -> pd.DataFrame:
+    if marks.empty or records.empty or "NO MATRIK" not in records.columns or "no_matrik" not in marks.columns:
+        return marks.iloc[0:0].copy()
+    allowed_matriks = {
+        str(value).strip()
+        for value in records["NO MATRIK"].dropna().tolist()
+        if str(value).strip()
+    }
+    if not allowed_matriks:
+        return marks.iloc[0:0].copy()
+    normalized_matriks = marks["no_matrik"].fillna("").astype(str).str.strip()
+    return marks[normalized_matriks.isin(allowed_matriks)].copy()
 
 
 def trial_question_section(question: object) -> str:
@@ -3964,7 +3982,7 @@ def trial_student_final_summary(df: pd.DataFrame, selected_test: str) -> pd.Data
     )
     final["final_max"] = float(expected_total)
     final["final_percent"] = (final["final_mark"] / final["final_max"] * 100).clip(lower=0)
-    context_columns = ["no_matrik", "NAMA PELAJAR", "KELAS", "PENSYARAH", "SISTEM", "PROGRAM", "SUBJEK"]
+    context_columns = ["no_matrik", "NAMA PELAJAR", "KELAS", "PENSYARAH", "SISTEM", "PROGRAM", "JURUSAN", "SUBJEK"]
     available = [column for column in context_columns if column in df.columns]
     context = df[available].drop_duplicates("no_matrik") if "no_matrik" in available else pd.DataFrame()
     if not context.empty:
@@ -4131,6 +4149,7 @@ def trial_student_performance_table(final: pd.DataFrame) -> pd.DataFrame:
         "PENSYARAH",
         "SISTEM",
         "PROGRAM",
+        "JURUSAN",
         "SUBJEK",
         "SECTION A %",
         "SECTION B %",

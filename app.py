@@ -100,6 +100,18 @@ DATASET_OPTIONS = {
     "Planning": "planning",
     "Assessments": "assessments",
 }
+TRIAL_QUESTION_MARK_COLUMNS = ["no_matrik", "test", "question", "mark"]
+TRIAL_UPLOAD_REQUIRED_COLUMNS = ["NO MATRIK", "TEST"]
+TRIAL_UPLOAD_COLUMN_ALIASES = {
+    "no matrik": "NO MATRIK",
+    "no_matrik": "NO MATRIK",
+    "matrik": "NO MATRIK",
+    "matrix": "NO MATRIK",
+    "student id": "NO MATRIK",
+    "test": "TEST",
+    "ujian": "TEST",
+    "trial": "TEST",
+}
 DATASET_SEARCH_COLUMNS = {
     "students": ["NO MATRIK", "NAMA PELAJAR", "KELAS", "SUBJEK", "JURUSAN", "SISTEM"],
     "lecturers": ["KELAS", "PENSYARAH"],
@@ -331,6 +343,7 @@ def sidebar_navigation(
     all_pages = [
         "ADMIN",
         "DATA MANAGEMENT",
+        "TRIAL DATA",
         "DEMOGRAPHY",
         "PROFILING",
         "DOWNLOAD",
@@ -359,7 +372,7 @@ def sidebar_navigation(
         "admin": all_pages,
         "executive": [page for page in all_pages if page != "ADMIN"],
         "contributor": [page for page in all_pages if page not in ["ADMIN", "LECTURER PROGRESS"]],
-        "lecturer": [page for page in all_pages if page not in ["ADMIN", "LECTURER PROGRESS", "DATA MANAGEMENT"]],
+        "lecturer": [page for page in all_pages if page not in ["ADMIN", "LECTURER PROGRESS", "DATA MANAGEMENT", "TRIAL DATA"]],
     }
     page = st.sidebar.radio(
         "Navigation",
@@ -3393,6 +3406,323 @@ def dataset_frame(dataset_key: str, refs: dict[str, pd.DataFrame]) -> pd.DataFra
     return df
 
 
+def trial_data_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> None:
+    page_header(
+        "TRIAL DATA",
+        "Upload Math Spark and Ultimate Spark question-level marks.",
+        user["role"],
+    )
+    tab_records, tab_import = st.tabs(["View or Delete", "Bulk Import"])
+    trial_marks = load_trial_question_marks(store)
+
+    with tab_records:
+        if trial_marks.empty and any("trial_question_marks" in str(error).lower() for error in store.last_errors):
+            st.warning("The trial_question_marks table is not available yet. Create it in Supabase before uploading trial marks.")
+            with st.expander("Required SQL"):
+                st.code(trial_question_marks_setup_sql(), language="sql")
+            return
+
+        with st.container(border=True):
+            st.caption("SEARCH RECORDS")
+            search = st.text_input(
+                "Search trial marks",
+                placeholder="Search by no matrik, test, or question",
+                key="trial_marks_search",
+            )
+        display = search_trial_marks(trial_marks, search)
+        display = attach_trial_student_context(display, records)
+        with st.container(border=True):
+            st.caption("TRIAL MARKS TABLE")
+            render_data_table(display, "trial_question_marks", "Trial Question Marks")
+        with st.container(border=True):
+            st.caption("DELETE RECORDS")
+            delete_options = trial_mark_option_map(display)
+            selected_labels = st.multiselect("Select trial mark rows to delete", list(delete_options.keys()))
+            selected_ids = [delete_options[label] for label in selected_labels]
+            if st.button("Delete selected trial mark rows", type="secondary", disabled=not selected_ids):
+                try:
+                    deleted = store.delete_trial_question_marks(selected_ids)
+                    store.log_edit_history(
+                        user,
+                        "DELETE",
+                        "trial_question_marks",
+                        details=f"Deleted {deleted} trial question mark row(s).",
+                    )
+                    st.success(f"Successfully deleted {deleted} trial mark row(s).")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Unable to delete trial mark rows: {exc}")
+
+    with tab_import:
+        with st.container(border=True):
+            st.caption("TEMPLATE AND UPLOAD")
+            template = pd.DataFrame(columns=["NO MATRIK", "TEST", "A1", "A2", "A3", "B1", "B2"])
+            st.download_button(
+                "Download CSV template",
+                template.to_csv(index=False).encode("utf-8-sig"),
+                "trial_question_marks_template.csv",
+                "text/csv",
+            )
+            uploaded = st.file_uploader(
+                "Upload Math Spark / Ultimate Spark file",
+                type=["csv", "xlsx", "xls"],
+                key="trial_question_marks_upload",
+            )
+
+        if uploaded:
+            try:
+                uploaded.seek(0)
+                incoming = pd.read_csv(uploaded) if uploaded.name.lower().endswith(".csv") else pd.read_excel(uploaded)
+            except Exception as exc:
+                st.error(f"Unable to read uploaded file: {exc}")
+                incoming = None
+
+            if incoming is not None:
+                preview, errors = trial_upload_to_long_frame(incoming)
+                with st.container(border=True):
+                    st.caption("IMPORT PREVIEW")
+                    display_preview = attach_trial_student_context(
+                        preview.drop(columns=[UPLOAD_ROW_NUMBER_COLUMN], errors="ignore"),
+                        records,
+                    )
+                    render_data_table(display_preview.head(1000), "trial_import_preview", "Trial Import Preview")
+                    if errors:
+                        st.error("Please fix the validation errors before saving.")
+                        st.write(errors)
+                    elif preview.empty:
+                        st.info("No question marks were found. Check that question columns contain marks.")
+                    else:
+                        st.info(f"{len(preview):,} question mark row(s) ready to save into Supabase.")
+                        with st.form("trial_import_save_form", clear_on_submit=False):
+                            submitted = st.form_submit_button(
+                                "Save trial marks to Supabase",
+                                type="primary",
+                                use_container_width=True,
+                            )
+                        if submitted and save_trial_import(store, user, preview):
+                            st.rerun()
+
+
+def load_trial_question_marks(store: SupabaseStore) -> pd.DataFrame:
+    if hasattr(store, "get_trial_question_marks"):
+        return store.get_trial_question_marks()
+    try:
+        response = store.client.table("trial_question_marks").select("*").execute()
+    except Exception as exc:
+        if hasattr(store, "last_errors"):
+            store.last_errors.append(f"trial_question_marks table query failed: {exc}")
+        return pd.DataFrame(columns=[*TRIAL_QUESTION_MARK_COLUMNS, "id", "created_at", "updated_at"])
+    return pd.DataFrame(response.data or [])
+
+
+def trial_upload_to_long_frame(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    df = normalize_trial_upload_columns(raw)
+    errors: list[str] = []
+    duplicate_upload_columns = sorted({str(column) for column in df.columns[df.columns.duplicated()].tolist()})
+    if duplicate_upload_columns:
+        errors.append(
+            "Duplicate column name(s) found in the uploaded file: "
+            f"{', '.join(duplicate_upload_columns)}. Remove duplicate headers and upload again."
+        )
+    missing = [column for column in TRIAL_UPLOAD_REQUIRED_COLUMNS if column not in df.columns]
+    errors.extend(f"Missing column: {column}" for column in missing)
+    if errors:
+        return pd.DataFrame(columns=[*TRIAL_QUESTION_MARK_COLUMNS, UPLOAD_ROW_NUMBER_COLUMN]), errors
+
+    question_columns = [
+        column
+        for column in df.columns
+        if column not in TRIAL_UPLOAD_REQUIRED_COLUMNS and not str(column).strip().lower().startswith("unnamed")
+    ]
+    if not question_columns:
+        return pd.DataFrame(columns=[*TRIAL_QUESTION_MARK_COLUMNS, UPLOAD_ROW_NUMBER_COLUMN]), [
+            "No question columns found. Keep columns like A1, A2, B1, B2 after NO MATRIK and TEST."
+        ]
+
+    rows: list[dict[str, object]] = []
+    seen_keys: set[tuple[str, str, str]] = set()
+    for index, row in df.iterrows():
+        upload_row_number = index + 2
+        no_matrik = clean_trial_text(row.get("NO MATRIK"))
+        test = clean_trial_text(row.get("TEST")).upper()
+        if not no_matrik:
+            errors.append(f"Row {upload_row_number}: NO MATRIK is required")
+            continue
+        if not test:
+            errors.append(f"Row {upload_row_number}: TEST is required")
+            continue
+        for question_column in question_columns:
+            raw_mark = row.get(question_column)
+            if is_nullable_upload_value(raw_mark):
+                continue
+            mark = pd.to_numeric(pd.Series([raw_mark]), errors="coerce").iloc[0]
+            question = clean_trial_text(question_column).upper()
+            if pd.isna(mark):
+                errors.append(f"Row {upload_row_number}: {question} must be a number")
+                continue
+            key = (no_matrik, test, question)
+            if key in seen_keys:
+                errors.append(f"Row {upload_row_number}: duplicate mark for {no_matrik}, {test}, {question}")
+                continue
+            seen_keys.add(key)
+            rows.append(
+                {
+                    "no_matrik": no_matrik,
+                    "test": test,
+                    "question": question,
+                    "mark": float(mark),
+                    UPLOAD_ROW_NUMBER_COLUMN: upload_row_number,
+                }
+            )
+
+    return pd.DataFrame(rows, columns=[*TRIAL_QUESTION_MARK_COLUMNS, UPLOAD_ROW_NUMBER_COLUMN]), errors
+
+
+def normalize_trial_upload_columns(raw: pd.DataFrame) -> pd.DataFrame:
+    df = raw.copy()
+    renamed: dict[object, str] = {}
+    for column in df.columns:
+        normalized = " ".join(str(column).strip().replace("_", " ").split()).casefold()
+        renamed[column] = TRIAL_UPLOAD_COLUMN_ALIASES.get(normalized, str(column).strip())
+    return df.rename(columns=renamed)
+
+
+def clean_trial_text(value: object) -> str:
+    if is_nullable_upload_value(value):
+        return ""
+    return " ".join(str(value).strip().split())
+
+
+def attach_trial_student_context(trial_marks: pd.DataFrame, records: pd.DataFrame) -> pd.DataFrame:
+    if trial_marks.empty:
+        return trial_marks
+    df = trial_marks.copy()
+    if "no_matrik" not in df:
+        return df
+    context_columns = ["NO MATRIK", "NAMA PELAJAR", "KELAS", "PENSYARAH", "SISTEM", "PROGRAM", "SUBJEK"]
+    available_context = [column for column in context_columns if column in records.columns]
+    if "NO MATRIK" not in available_context:
+        return df
+    context = records[available_context].drop_duplicates("NO MATRIK")
+    df = df.merge(context, left_on="no_matrik", right_on="NO MATRIK", how="left")
+    ordered = [
+        "id",
+        "no_matrik",
+        "NAMA PELAJAR",
+        "KELAS",
+        "PENSYARAH",
+        "SISTEM",
+        "PROGRAM",
+        "SUBJEK",
+        "test",
+        "question",
+        "mark",
+        "created_at",
+        "updated_at",
+    ]
+    return df[[column for column in ordered if column in df.columns]]
+
+
+def search_trial_marks(trial_marks: pd.DataFrame, search: str) -> pd.DataFrame:
+    if trial_marks.empty or not search:
+        return trial_marks
+    search_text = search.casefold().strip()
+    columns = [column for column in ["no_matrik", "test", "question"] if column in trial_marks.columns]
+    if not columns:
+        return trial_marks
+    mask = pd.Series(False, index=trial_marks.index)
+    for column in columns:
+        mask = mask | trial_marks[column].fillna("").astype(str).str.casefold().str.contains(search_text, regex=False)
+    return trial_marks[mask]
+
+
+def trial_mark_option_map(trial_marks: pd.DataFrame) -> dict[str, object]:
+    if trial_marks.empty or "id" not in trial_marks.columns:
+        return {}
+    options: dict[str, object] = {}
+    for _, row in trial_marks.head(1000).iterrows():
+        record_id = row.get("id")
+        if pd.isna(record_id):
+            continue
+        label = f"{row.get('no_matrik', '')} | {row.get('test', '')} | {row.get('question', '')} | {format_mark_value(row.get('mark'))}"
+        options[label] = record_id
+    return options
+
+
+def save_trial_import(store: SupabaseStore, user: dict, preview: pd.DataFrame) -> bool:
+    if preview.empty:
+        st.error("No trial marks found in the uploaded file.")
+        return False
+    try:
+        progress_bar = st.progress(0)
+        progress_status = st.empty()
+
+        def update_progress(
+            batch_number: int,
+            total_batches: int,
+            saved_rows: int,
+            total_rows: int,
+            row_numbers: list[int],
+        ) -> None:
+            progress_bar.progress(min(batch_number / total_batches, 1.0))
+            progress_status.info(
+                f"Batch {batch_number}/{total_batches} saved. "
+                f"Uploaded rows {format_import_row_numbers(row_numbers)}. "
+                f"{saved_rows:,}/{total_rows:,} question mark row(s) saved."
+            )
+
+        saved = store.bulk_upsert_trial_question_marks(
+            preview,
+            batch_size=500,
+            progress_callback=update_progress,
+        )
+        if saved <= 0:
+            st.error("No trial marks were saved.")
+            return False
+        store.log_edit_history(
+            user,
+            "BULK IMPORT",
+            "trial_question_marks",
+            details=f"Saved {saved} trial question mark row(s).",
+        )
+        st.success(f"Bulk import successful. {saved:,} trial question mark row(s) saved.")
+        return True
+    except BulkImportBatchError as exc:
+        st.error(
+            "Bulk import stopped. "
+            f"Failed batch {exc.batch_number}/{exc.total_batches}. "
+            f"Uploaded row(s): {format_import_row_numbers(exc.row_numbers)}. "
+            f"Supabase error: {exc.original_error}"
+        )
+        return False
+    except Exception as exc:
+        st.error(f"Unable to save trial marks: {exc}")
+        return False
+
+
+def trial_question_marks_setup_sql() -> str:
+    return """create table if not exists public.trial_question_marks (
+    id bigint generated by default as identity primary key,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    no_matrik text not null,
+    test text not null,
+    question text not null,
+    mark numeric,
+    constraint trial_question_marks_unique
+    unique (no_matrik, test, question)
+);
+
+create index if not exists trial_question_marks_no_matrik_idx
+on public.trial_question_marks (no_matrik);
+
+create index if not exists trial_question_marks_test_idx
+on public.trial_question_marks (test);
+
+create index if not exists trial_question_marks_question_idx
+on public.trial_question_marks (question);"""
+
+
 def save_bulk_import(
     store: SupabaseStore,
     user: dict,
@@ -5826,6 +6156,8 @@ def main() -> None:
         admin_page(user, store)
     elif page == "DATA MANAGEMENT":
         data_management_page(records, user, store)
+    elif page == "TRIAL DATA":
+        trial_data_page(records, user, store)
 
 
 if __name__ == "__main__":

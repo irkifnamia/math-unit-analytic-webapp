@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -21,6 +21,7 @@ ASSESSMENTS_TABLE = "assessments"
 PLANNING_TABLE = "planning"
 EDIT_HISTORY_TABLE = "edit_history"
 APP_USERS_TABLE = "app_users"
+TRIAL_QUESTION_MARKS_TABLE = "trial_question_marks"
 UPLOAD_ROW_NUMBER_COLUMN = "_UPLOAD_ROW_NUMBER"
 NULL_UPLOAD_VALUES = {"", "-", "none", "nan", "nat", "null"}
 
@@ -124,6 +125,15 @@ APP_USERS_COLUMNS = [
     "role",
     "pensyarah",
     "is_active",
+]
+TRIAL_QUESTION_MARKS_COLUMNS = [
+    "id",
+    "created_at",
+    "updated_at",
+    "no_matrik",
+    "test",
+    "question",
+    "mark",
 ]
 
 UPLOAD_COLUMNS = ["NO MATRIK", "NAMA PELAJAR", "JURUSAN", "SISTEM", "KELAS", "SUBJEK"]
@@ -485,6 +495,74 @@ class SupabaseStore:
             return users
         return users.sort_values(["role", "full_name"], ascending=[True, True], na_position="last")
 
+    def get_trial_question_marks(self) -> pd.DataFrame:
+        errors: list[str] = []
+        marks = select_all_table_frame(
+            self.client,
+            TRIAL_QUESTION_MARKS_TABLE,
+            errors,
+            fallback_columns=TRIAL_QUESTION_MARKS_COLUMNS,
+        )
+        self.last_errors.extend(errors)
+        if marks.empty:
+            return marks
+        sort_columns = [column for column in ["test", "question", "no_matrik"] if column in marks.columns]
+        if sort_columns:
+            marks = marks.sort_values(sort_columns, ascending=True, na_position="last")
+        return marks
+
+    def bulk_upsert_trial_question_marks(
+        self,
+        df: pd.DataFrame,
+        batch_size: int = 500,
+        progress_callback: Callable[[int, int, int, int, list[int]], None] | None = None,
+    ) -> int:
+        allowed_columns = ["no_matrik", "test", "question", "mark"]
+        rows: list[dict[str, Any]] = []
+        for _, row in df.iterrows():
+            raw = row.to_dict()
+            payload = clean_payload(raw, allowed_columns, include_empty=True)
+            no_matrik = str(payload.get("no_matrik") or "").strip()
+            test = str(payload.get("test") or "").strip().upper()
+            question = str(payload.get("question") or "").strip().upper()
+            if not no_matrik or not test or not question:
+                continue
+            payload["no_matrik"] = no_matrik
+            payload["test"] = test
+            payload["question"] = question
+            if not is_empty_value(payload.get("mark")):
+                number = pd.to_numeric(pd.Series([payload.get("mark")]), errors="coerce").iloc[0]
+                if pd.isna(number):
+                    raise ValueError(f"Mark for {no_matrik} {test} {question} must be numeric.")
+                payload["mark"] = float(number)
+            else:
+                payload["mark"] = None
+            payload = with_updated_at(payload, TRIAL_QUESTION_MARKS_TABLE)
+            if UPLOAD_ROW_NUMBER_COLUMN in raw:
+                payload[UPLOAD_ROW_NUMBER_COLUMN] = raw.get(UPLOAD_ROW_NUMBER_COLUMN)
+            rows.append(payload)
+
+        if not rows:
+            return 0
+
+        saved = bulk_upsert_batches(
+            self.client,
+            TRIAL_QUESTION_MARKS_TABLE,
+            rows,
+            "no_matrik,test,question",
+            batch_size=batch_size,
+            progress_callback=progress_callback,
+        )
+        return saved
+
+    def delete_trial_question_marks(self, record_ids: list[Any]) -> int:
+        if not record_ids:
+            return 0
+        record_ids = [record_id for record_id in (normalize_supabase_id(value) for value in record_ids) if not is_empty_value(record_id)]
+        if not record_ids:
+            return 0
+        self.client.table(TRIAL_QUESTION_MARKS_TABLE).delete().in_("id", record_ids).execute()
+        return len(record_ids)
     def upsert_app_user(self, payload: dict[str, Any], record_id: Any | None = None) -> None:
         allowed_columns = ["ic_number", "full_name", "role", "pensyarah", "is_active"]
         clean = clean_payload(payload, allowed_columns)

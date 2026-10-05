@@ -3488,7 +3488,7 @@ def trial_data_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> 
                     render_data_table(display_preview.head(1000), "trial_import_preview", "Trial Import Preview")
                     if errors:
                         st.error("Please fix the validation errors before saving.")
-                        st.write(errors)
+                        render_validation_errors(errors)
                     elif preview.empty:
                         st.info("No question marks were found. Check that question columns contain marks.")
                     else:
@@ -3539,8 +3539,8 @@ def trial_upload_to_long_frame(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[st
             "No question columns found. Keep columns like A1, A2, B1, B2 after NO MATRIK and TEST."
         ]
 
-    rows: list[dict[str, object]] = []
-    seen_keys: set[tuple[str, str, str]] = set()
+    rows_by_key: dict[tuple[str, str, str], dict[str, object]] = {}
+    duplicate_count = 0
     for index, row in df.iterrows():
         upload_row_number = index + 2
         no_matrik = clean_trial_text(row.get("NO MATRIK"))
@@ -3561,21 +3561,34 @@ def trial_upload_to_long_frame(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[st
                 errors.append(f"Row {upload_row_number}: {question} must be a number")
                 continue
             key = (no_matrik, test, question)
-            if key in seen_keys:
-                errors.append(f"Row {upload_row_number}: duplicate mark for {no_matrik}, {test}, {question}")
-                continue
-            seen_keys.add(key)
-            rows.append(
-                {
-                    "no_matrik": no_matrik,
-                    "test": test,
-                    "question": question,
-                    "mark": float(mark),
-                    UPLOAD_ROW_NUMBER_COLUMN: upload_row_number,
-                }
-            )
+            if key in rows_by_key:
+                duplicate_count += 1
+            rows_by_key[key] = {
+                "no_matrik": no_matrik,
+                "test": test,
+                "question": question,
+                "mark": float(mark),
+                UPLOAD_ROW_NUMBER_COLUMN: upload_row_number,
+            }
 
+    if duplicate_count:
+        st.warning(
+            f"{duplicate_count:,} duplicate student/test/question mark(s) were found in the uploaded file. "
+            "The latest value in the file will be used for each duplicate."
+        )
+
+    rows = list(rows_by_key.values())
     return pd.DataFrame(rows, columns=[*TRIAL_QUESTION_MARK_COLUMNS, UPLOAD_ROW_NUMBER_COLUMN]), errors
+
+
+def render_validation_errors(errors: list[str]) -> None:
+    if not errors:
+        return
+    st.dataframe(
+        pd.DataFrame({"Validation error": errors}),
+        hide_index=True,
+        use_container_width=True,
+    )
 
 
 def normalize_trial_upload_columns(raw: pd.DataFrame) -> pd.DataFrame:

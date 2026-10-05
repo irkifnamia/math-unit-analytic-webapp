@@ -3456,7 +3456,7 @@ def trial_data_page(records: pd.DataFrame, user: dict, store: SupabaseStore) -> 
     with tab_import:
         with st.container(border=True):
             st.caption("TEMPLATE AND UPLOAD")
-            template = pd.DataFrame(columns=["NO MATRIK", "TEST", "A1", "A2", "A3", "B1", "B2"])
+            template = pd.DataFrame(columns=["NO MATRIK", "TEST", "A1", "A2", "A3", "B1", "B2", "B3", "B4", "B5", "B6", "B7"])
             st.download_button(
                 "Download CSV template",
                 template.to_csv(index=False).encode("utf-8-sig"),

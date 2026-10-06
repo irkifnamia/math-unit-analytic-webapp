@@ -4028,8 +4028,8 @@ def render_trial_kpis(question_frame: pd.DataFrame, final_frame: pd.DataFrame) -
             lowest_question = f"{weakest_row['question']} ({weakest_row['Average_Percent']:.1f}%)"
             strongest_question = f"{strongest_row['question']} ({strongest_row['Average_Percent']:.1f}%)"
     cards[0].metric("Students", f"{final_frame['no_matrik'].nunique():,}" if not final_frame.empty else "0")
-    cards[1].metric("Average Question Correct", format_percentage(avg_question))
-    cards[2].metric("Average Final", format_percentage(avg_final))
+    cards[1].metric("Average Correct %", format_percentage(avg_question))
+    cards[2].metric("Average Final Mark", format_percentage(avg_final))
     cards[3].metric("Strongest Question", strongest_question)
     cards[4].metric("Weakest Question", lowest_question)
 
